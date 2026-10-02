@@ -1,0 +1,16 @@
+workspace/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.db
+*.db-*
+*.sqlite*
+keys.json
+wechat_db_keys.txt
+*.log
+.idea/
+.reference_input/
+preferences.json
+.env
+.env.*

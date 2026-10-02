@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="{{ theme }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>微信聊天记录分析</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script id="initial-preferences" type="application/json">{{ preferences | tojson }}</script>
+  <script defer src="/assets/plotly.min.js"></script>
+  <script defer src="{{ url_for('static', filename='app.js') }}"></script>
+</head>
+<body>
+<main>
+  <header>
+    <div><h1>微信聊天记录分析</h1><p class="muted">本机处理 · 原始数据库只读 · 分析隔离副本</p></div>
+    <div class="page-options">
+      <label class="switch"><input id="dark-mode" type="checkbox" {% if theme == 'dark' %}checked{% endif %}>黑夜模式</label>
+      <details class="settings"><summary>界面设置</summary>
+        <div class="settings-content">
+          <strong>下次打开时记住</strong>
+          <label><input id="remember-theme" type="checkbox">主题</label>
+          <label><input id="remember-contact" type="checkbox">联系人</label>
+          <label><input id="remember-dates" type="checkbox">日期范围</label>
+          <label><input id="remember-viewports" type="checkbox">图表缩放</label>
+          <p class="muted small">四项独立设置，默认关闭；只保存在本机。</p>
+          <p id="save-status" class="small" role="status"></p>
+        </div>
+      </details>
+    </div>
+  </header>
+  <div class="notice">仅分析你本人电脑上的微信本地数据，不上传聊天记录、联系人或密钥。WAL/SHM 已复制保留；最近尚未写回主数据库的消息可能未包含。</div>
+  <div id="message" role="status" hidden></div>
+  <details id="database-panel" class="panel">
+    <summary>本地数据库 <span id="database-badge" class="muted small">正在检查</span></summary>
+    <div class="database-grid">
+      <div>
+        <p id="auto-version" class="muted"></p>
+        <label>微信版本（可手动修改）<input id="version" type="text" placeholder="4.1.13.65"></label>
+        <p id="version-warning" class="small warning" hidden>未验证版本：目前仅验证 4.1.13.65。</p>
+      </div>
+      <div><div id="workspace-status" class="notice">正在检查分析副本……</div>
+        <p id="source-path" class="muted path"></p>
+        <p id="workspace-path" class="muted path"></p>
+        <p id="copied-at" class="muted"></p>
+        <details><summary id="database-count">数据库状态</summary><ul id="database-list" class="status-list"></ul></details>
+      </div>
+      <div class="actions">
+        <button id="refresh" class="primary" data-operation disabled>更新聊天记录</button>
+        <button id="reinitialize" data-operation disabled>重新初始化</button>
+        <p class="muted small">重新复制、验证并解析。建议保持对应微信账号登录、暂停收发消息；失败时保留原副本。</p>
+      </div>
+    </div>
+    <section id="initialization" hidden>
+      <h3>初始化分析副本</h3>
+      <label>微信账号或 db_storage 路径<input id="data-path" type="text" placeholder="D:\...\xwechat_files\账号\db_storage"></label>
+      <div class="button-row">
+        <button id="inspect" data-operation>检测目录</button>
+        <button id="copy" data-operation disabled>创建分析副本</button>
+        <button id="extract" data-operation disabled>提取数据库密钥</button>
+        <button id="decrypt" class="primary" data-operation disabled>解密数据库</button>
+      </div>
+      <p id="inspection" class="muted"></p>
+      <div id="pending-status" class="small"></div>
+    </section>
+  </details>
+  <section id="task-panel" class="panel" hidden>
+    <h3 id="task-title">数据库任务</h3>
+    <pre id="task-progress" role="log" aria-live="polite"></pre>
+  </section>
+  <p id="loading" class="muted" role="status">正在连接本地数据库……</p>
+  <section id="analysis" hidden>
+    <p id="copy-note" class="muted small"></p>
+    <label for="contact-search">联系人（搜索备注、微信昵称或微信号）</label>
+    <input id="contact-search" type="search" placeholder="输入关键词筛选通讯录好友">
+    <select id="contact-select" aria-label="联系人"></select>
+    <p id="contact-note" class="muted small"></p>
+    <p id="available-range" class="muted"></p>
+    <div id="analysis-warnings"></div>
+    <h3>统一日期范围</h3>
+    <p class="muted small">修改这里同步所有统计；每张图也可单独选择日期。更新聊天记录会保留当前筛选和缩放。</p>
+    <div class="date-controls" data-range="global">
+      <label>起始日期<input id="global-start" type="date" min="1970-01-01"></label>
+      <label>结束日期<input id="global-end" type="date" min="1970-01-01"></label>
+    </div>
+    <div id="metrics" class="metrics"></div>
+    <div id="peak-metrics" class="metrics two"></div>
+    <p id="sender-note" class="muted small"></p>
+    <section class="section">
+      <h2>消息类型统计</h2>
+      <p class="muted small">系统、位置和名片已排除，占比按表内消息总数计算；引用回复按自身内容归类。</p>
+      <div id="reference-metrics" class="metrics three"></div>
+      <div id="type-table" class="table-wrap"></div>
+      <p class="muted small">表情指表情包，文字中的表情符号计为文字；红包和转账按消息条数计数。</p>
+    </section>
+    <section class="section">
+      <h2>每日消息趋势</h2>
+      <div class="date-controls" data-range="daily"><label>本图起始日期<input id="daily-start" type="date" min="1970-01-01"></label><label>本图结束日期<input id="daily-end" type="date" min="1970-01-01"></label></div>
+      <p id="daily-count" class="muted small"></p><div id="activity-note"></div>
+      <p class="muted small">按七日平均趋势识别持续高活跃区间，长度不固定，至少三个较活跃日期；仅依据双方消息。滚轮缩放日期，左键拖动，或使用底部滑条。</p>
+      <div class="chart-actions"><button data-viewport="daily" data-range-action="recent">最近一个月</button><button data-viewport="daily" data-range-action="all">全部日期</button></div>
+      <div id="daily-chart" class="chart"></div>
+    </section>
+    <section class="section">
+      <h2>24 小时消息分布</h2>
+      <div class="date-controls" data-range="hourly"><label>本图起始日期<input id="hourly-start" type="date" min="1970-01-01"></label><label>本图结束日期<input id="hourly-end" type="date" min="1970-01-01"></label></div>
+      <p id="hourly-count" class="muted small"></p>
+      <div class="chart-actions"><span id="hourly-visible" class="small"></span><button data-viewport="hourly" data-range-action="recent">最近一个月</button><button data-viewport="hourly" data-range-action="all">全部日期</button></div>
+      <p class="muted small">滚轮缩放日期、左键拖动，柱状图按可见日期重新统计。</p>
+      <div id="hourly-chart" class="chart"></div>
+    </section>
+    <section class="section">
+      <h2>星期 × 小时热力图</h2>
+      <div class="date-controls" data-range="heatmap"><label>本图起始日期<input id="heatmap-start" type="date" min="1970-01-01"></label><label>本图结束日期<input id="heatmap-end" type="date" min="1970-01-01"></label></div>
+      <p id="heatmap-count" class="muted small"></p><div id="heatmap-chart" class="chart"></div>
+    </section>
+    <section class="section"><h2>最长文字消息</h2><p class="muted small">按 Python 字符数排序，最多 20 条；点击内容可展开完整文字。</p><div id="longest-table" class="table-wrap"></div></section>
+  </section>
+  <footer>所有数据仅在本机处理 · 工作区、设置、数据库和密钥默认不提交 Git</footer>
+</main>
+</body>
+</html>

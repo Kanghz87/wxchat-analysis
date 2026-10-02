@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+body { margin:0; font:14px "Microsoft YaHei",sans-serif; color:var(--text); background:transparent; }
+.card { background:var(--background); border:1px solid var(--grid); border-radius:14px; padding:12px 10px 4px; }
+.toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:0 10px; flex-wrap:wrap; }
+button { color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:6px 10px; cursor:pointer; }
+button:hover { filter:brightness(0.9); }
+.hint { color:var(--muted); font-size:12px; margin:8px 10px 0; }
+#chart { touch-action:none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="toolbar">
+    <span id="visible-range" aria-live="polite"></span>
+    <span><button id="recent">最近一个月</button> <button id="all">全部日期</button></span>
+  </div>
+  <p class="hint">滚轮缩放日期，按住左键左右拖动；也可拖动底部滑条。柱状图随可见日期重新统计。</p>
+  <div id="chart"></div>
+</div>
+<script>__PLOTLY_JS__</script>
+<script>
+const payload = __DATA__;
+for (const [name, value] of Object.entries(payload.colors)) {
+  document.documentElement.style.setProperty("--" + name, value);
+}
+const DAY = 86400000;
+const origin = millis(payload.full[0]);
+const limit = millis(payload.full[1]);
+const gd = document.getElementById("chart");
+const prefix = [Array(24).fill(0)];
+for (const row of payload.hours) {
+  prefix.push(row.map((count, hour) => count + prefix[prefix.length - 1][hour]));
+}
+function millis(value) {
+  if (typeof value === "number") return value;
+  const text = String(value).replace(" ", "T");
+  return Date.parse(text.length === 10 ? text + "T00:00:00Z" : text.endsWith("Z") ? text : text + "Z");
+}
+function clampRange(left, right) {
+  const width = Math.min(limit - origin, Math.max(DAY, right - left));
+  const low = Math.max(origin, Math.min(limit - width, left));
+  return [low, low + width];
+}
+function range() { return gd.layout.xaxis2.range.map(millis); }
+function setRange(left, right) {
+  const bounds = clampRange(left, right);
+  return Plotly.relayout(gd, {"xaxis2.range": bounds.map(value => new Date(value).toISOString())});
+}
+function updateHours() {
+  const bounds = range();
+  const first = Math.max(0, Math.min(payload.dates.length - 1, Math.floor((bounds[0] - origin) / DAY)));
+  const after = Math.max(first + 1, Math.min(payload.dates.length, Math.ceil((bounds[1] - origin) / DAY)));
+  const counts = prefix[after].map((count, hour) => count - prefix[first][hour]);
+  const total = counts.reduce((sum, count) => sum + count, 0);
+  document.getElementById("visible-range").textContent =
+    payload.dates[first] + " 至 " + payload.dates[after - 1] + " · " + total.toLocaleString() + " 条消息";
+  gd.dataset.start = payload.dates[first];
+  gd.dataset.end = payload.dates[after - 1];
+  gd.dataset.count = total;
+  return Plotly.restyle(gd, {y: [counts]}, [0]);
+}
+Plotly.newPlot(gd, payload.figure.data, payload.figure.layout, {
+  responsive:true, displaylogo:false, displayModeBar:false, scrollZoom:false, doubleClick:false
+}).then(() => {
+  updateHours();
+  gd.on("plotly_relayout", event => {
+    if (!Object.keys(event).some(key => key.startsWith("xaxis2."))) return;
+    const current = range(), safe = clampRange(current[0], current[1]);
+    if (Math.abs(current[0] - safe[0]) > 1 || Math.abs(current[1] - safe[1]) > 1) {
+      setRange(safe[0], safe[1]);
+    } else {
+      updateHours();
+    }
+  });
+  gd.addEventListener("wheel", event => {
+    event.preventDefault();
+    const current = range();
+    const factor = Math.exp(Math.max(-180, Math.min(180, event.deltaY)) / 400);
+    const size = gd._fullLayout._size;
+    const box = gd.getBoundingClientRect();
+    const anchor = Math.max(0, Math.min(1, (event.clientX - box.left - size.l) / size.w));
+    const width = (current[1] - current[0]) * factor;
+    const center = current[0] + (current[1] - current[0]) * anchor;
+    setRange(center - width * anchor, center + width * (1 - anchor));
+  }, {passive:false, capture:true});
+  // 小时轴固定：在柱图中拖动时同样移动日期，而不是移动小时刻度。
+  let dragging = null;
+  gd.addEventListener("mousedown", event => {
+    const box = gd.getBoundingClientRect(), size = gd._fullLayout._size;
+    const x = event.clientX - box.left, y = event.clientY - box.top;
+    if (event.button === 0 && x >= size.l && x <= size.l + size.w &&
+        y >= size.t && y <= size.t + size.h * 0.57) {
+      dragging = {x:event.clientX, bounds:range(), width:size.w};
+      event.preventDefault();
+    }
+  }, {capture:true});
+  document.addEventListener("mousemove", event => {
+    if (!dragging) return;
+    const shift = -(event.clientX - dragging.x) / dragging.width * (dragging.bounds[1] - dragging.bounds[0]);
+    setRange(dragging.bounds[0] + shift, dragging.bounds[1] + shift);
+  }, {capture:true});
+  document.addEventListener("mouseup", () => { dragging = null; }, {capture:true});
+  document.getElementById("recent").onclick = () => setRange(...payload.recent.map(millis));
+  document.getElementById("all").onclick = () => setRange(origin, limit);
+  gd.addEventListener("dblclick", () => setRange(...payload.recent.map(millis)));
+});
+</script>
+</body>
+</html>

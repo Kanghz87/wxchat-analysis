@@ -1,0 +1,13 @@
+[server]
+address = "127.0.0.1"
+headless = true
+
+[browser]
+gatherUsageStats = false
+
+[client]
+allowedOrigins = ["http://127.0.0.1:*", "http://localhost:*"]
+
+[theme]
+base = "light"
+primaryColor = "#16866a"
