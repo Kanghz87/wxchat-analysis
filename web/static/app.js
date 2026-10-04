@@ -9,8 +9,10 @@ const state = {
   status: null, contacts: [], account: "", username: "", dates: {}, viewports: {},
   data: null, hourly: null, rendering: false, analysisSerial: 0,
   busy: false, loadingAnalysis: false, initializing: false, inspected: false,
+  typeExpanded: false,
   panelTouched: false, finishedTask: "", saveTimer: null, saving: false, saveAgain: false,
 };
+const contactPicker = {items: [], index: -1};
 const number = value => Number(value || 0).toLocaleString("zh-CN");
 function say(message, error = false) {
   $("message").hidden = !message;
@@ -132,6 +134,15 @@ function table(target, columns, rows, message) {
   }
   $(target).append(element);
 }
+function renderMessageTypes(types) {
+  const hiddenCount = Math.max(0, types.length - 3);
+  if (!hiddenCount) state.typeExpanded = false;
+  table("type-table", ["消息类型", "消息数量", "占比", "我发送", "对方发送"],
+    state.typeExpanded ? types : types.slice(0, 3), "所选日期范围内没有可统计的消息类型。");
+  $("type-toggle").hidden = !hiddenCount;
+  $("type-toggle").setAttribute("aria-expanded", String(state.typeExpanded));
+  $("type-toggle-label").textContent = state.typeExpanded ? "收起，只显示前三类" : "展开其余 " + hiddenCount + " 类";
+}
 function renderSummary(data) {
   const s = data.metrics;
   metric("metrics", [["总消息", number(s.total)], ["我发送", number(s.mine)],
@@ -142,8 +153,9 @@ function renderSummary(data) {
   $("sender-note").textContent = data.system_count || data.unknown_count ?
     "总消息包含 " + number(data.system_count) + " 条系统消息、" + number(data.unknown_count) + " 条发送者未识别消息，不计入双方发送数量。" : "";
   metric("reference-metrics", [["引用次数", number(data.references.total)], ["我引用", number(data.references.mine)], ["对方引用", number(data.references.other)]]);
-  table("type-table", ["消息类型", "消息数量", "占比", "我发送", "对方发送"], data.types, "所选日期范围内没有可统计的消息类型。");
+  renderMessageTypes(data.types);
   table("longest-table", ["排名", "字符数", "发送者", "时间", "内容"], data.longest, "所选日期范围内没有可解析的文字消息。");
+  $("longest-count").textContent = data.longest.length + " 条";
   const available = data.available;
   $("available-range").textContent = data.empty ? "该联系人在当前副本中没有可用聊天记录。" :
     "已读取 " + available.shards + " 个消息分片；该联系人的可用记录：" + available.first + " 至 " + available.last + "，共 " + number(available.count) + " 条。";
@@ -186,10 +198,11 @@ async function renderDaily(data) {
     type: "scatter", mode: "lines+markers", name, x: data.dates, y: data.counts[name],
     line: {color: [colors.mine, colors.other, colors.total][index], width: 2, shape: "spline", smoothing: .5},
     marker: {size: 4}, fill: index === 2 ? "tozeroy" : "none", fillcolor: "rgba(113,131,236,.16)",
-    hovertemplate: name + "<br>日期=%{x|%m/%d}<br>消息数量=%{y}<extra></extra>",
+    hovertemplate: name + "：%{y} 条<extra></extra>",
   }));
   const figure = layout(480);
   figure.xaxis = dateAxis("daily", data);
+  figure.xaxis.hoverformat = "%Y-%m-%d";
   figure.yaxis.title = {text: "消息数量"};
   figure.uirevision = state.account + state.username + JSON.stringify(state.dates.daily);
   if (data.period) {
@@ -348,8 +361,9 @@ function updateDisabled() {
   $("decrypt").disabled = state.busy || !pending || !Object.keys(pending.keys).length || !Object.values(pending.keys).every(Boolean);
   $("version").disabled = state.busy;
   $("data-path").disabled = state.busy;
-  $("contact-select").disabled = state.busy;
+  $("contact-toggle").disabled = state.busy || !state.contacts.length;
   $("contact-search").disabled = state.busy;
+  if (state.busy) closeContactPicker();
   document.querySelectorAll("input[type=date]").forEach(input => { input.disabled = state.busy; });
 }
 async function loadAnalysis() {
@@ -386,29 +400,135 @@ function scopedView(username) {
 }
 async function chooseContact(username, preserve = false) {
   state.username = username;
+  closeContactPicker();
   if (!preserve) {
+    state.typeExpanded = false;
+    $("longest-panel").open = false;
     const saved = scopedView(username);
     state.dates = state.preferences.remember.dates ? structuredClone(saved.dates || {}) : {};
     state.viewports = state.preferences.remember.viewports ? structuredClone(saved.viewports || {}) : {};
   }
   await loadAnalysis();
 }
+function contactName(contact) { return contact.display_name || contact.label || contact.username; }
+function contactDetail(contact) {
+  return "微信昵称：" + (contact.nick_name || "未设置昵称") + " · 微信号：" + (contact.wechat_id || contact.username);
+}
+function updateSelectedContact() {
+  const contact = state.contacts.find(item => item.username === state.username);
+  $("contact-search").value = contact ? contactName(contact) : "";
+  $("contact-search").title = contact?.label || "";
+  $("contact-subtitle").textContent = contact ? contactDetail(contact) : "选择一位好友查看聊天统计";
+  $("contact-avatar").textContent = contact ? Array.from(contactName(contact))[0] : "微";
+  $("contact-note").textContent = "仅显示通讯录好友 · 共 " + state.contacts.length + " 位";
+}
+function closeContactPicker() {
+  $("contact-dropdown").hidden = true;
+  $("contact-search").setAttribute("aria-expanded", "false");
+  $("contact-search").removeAttribute("aria-activedescendant");
+  $("contact-toggle").setAttribute("aria-expanded", "false");
+  $("contact-toggle").setAttribute("aria-label", "展开联系人列表");
+  updateSelectedContact();
+}
+function highlightContact(index, scroll = false) {
+  contactPicker.index = index;
+  const entries = $("contact-options").children;
+  Array.from(entries).forEach((entry, position) => entry.classList.toggle("is-active", position === index));
+  if (index < 0) { $("contact-search").removeAttribute("aria-activedescendant"); return; }
+  $("contact-search").setAttribute("aria-activedescendant", entries[index].id);
+  if (scroll) entries[index].scrollIntoView({block: "nearest"});
+}
+function pickContact(username) {
+  if (state.busy) return;
+  if (username === state.username) { closeContactPicker(); return; }
+  say("");
+  chooseContact(username);
+}
 function populateContacts() {
   const search = $("contact-search").value.toLocaleLowerCase().trim();
-  const filtered = state.contacts.filter(contact => contact.label.toLocaleLowerCase().includes(search));
-  $("contact-select").replaceChildren();
-  for (const contact of filtered) {
-    const option = document.createElement("option");
-    option.value = contact.username; option.textContent = contact.label;
-    option.selected = contact.username === state.username;
-    $("contact-select").append(option);
-  }
-  if (!filtered.some(item => item.username === state.username)) $("contact-select").selectedIndex = -1;
-  $("contact-note").textContent = "仅显示通讯录好友，共 " + state.contacts.length + " 位；当前匹配 " + filtered.length + " 位。显示格式：备注 - 微信昵称 - 微信号。";
+  contactPicker.items = state.contacts.filter(contact =>
+    [contact.label, contact.display_name, contact.nick_name, contact.wechat_id, contact.username]
+      .some(value => String(value || "").toLocaleLowerCase().includes(search)));
+  $("contact-options").replaceChildren();
+  contactPicker.items.forEach((contact, index) => {
+    const entry = document.createElement("button");
+    entry.type = "button"; entry.tabIndex = -1;
+    entry.id = "contact-option-" + index; entry.className = "contact-option";
+    entry.setAttribute("role", "option");
+    entry.setAttribute("aria-selected", String(contact.username === state.username));
+    const avatar = document.createElement("span");
+    avatar.className = "contact-avatar"; avatar.setAttribute("aria-hidden", "true");
+    avatar.textContent = Array.from(contactName(contact))[0];
+    const description = document.createElement("span");
+    description.className = "contact-description";
+    const name = document.createElement("span");
+    name.className = "contact-name"; name.textContent = contactName(contact);
+    const detail = document.createElement("span");
+    detail.className = "muted small"; detail.textContent = contactDetail(contact);
+    description.append(name, detail); entry.append(avatar, description);
+    if (contact.username === state.username) {
+      const check = document.createElement("span");
+      check.className = "contact-check"; check.textContent = "✓"; check.setAttribute("aria-hidden", "true");
+      entry.append(check);
+    }
+    entry.addEventListener("mousedown", event => event.preventDefault());
+    entry.addEventListener("click", () => pickContact(contact.username));
+    $("contact-options").append(entry);
+  });
+  $("contact-results").textContent = search ? "匹配 " + contactPicker.items.length + " 位好友" : "共 " + state.contacts.length + " 位好友 · 输入关键词搜索";
+  $("contact-empty").hidden = !!contactPicker.items.length;
+  const selected = contactPicker.items.findIndex(contact => contact.username === state.username);
+  highlightContact(selected >= 0 ? selected : contactPicker.items.length ? 0 : -1);
+}
+function openContactPicker() {
+  if (state.busy || !$("contact-dropdown").hidden) return;
+  $("contact-dropdown").hidden = false;
+  $("contact-search").value = "";
+  $("contact-search").setAttribute("aria-expanded", "true");
+  $("contact-toggle").setAttribute("aria-expanded", "true");
+  $("contact-toggle").setAttribute("aria-label", "收起联系人列表");
+  populateContacts();
+  $("contact-search").focus();
+}
+function installContactEvents() {
+  const input = $("contact-search");
+  input.addEventListener("focus", openContactPicker);
+  input.addEventListener("input", () => {
+    if (state.busy) return;
+    $("contact-dropdown").hidden = false;
+    input.setAttribute("aria-expanded", "true");
+    $("contact-toggle").setAttribute("aria-expanded", "true");
+    $("contact-toggle").setAttribute("aria-label", "收起联系人列表");
+    populateContacts();
+  });
+  input.addEventListener("keydown", event => {
+    if (event.isComposing) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if ($("contact-dropdown").hidden) { openContactPicker(); return; }
+      if (contactPicker.items.length) {
+        const step = event.key === "ArrowDown" ? 1 : -1;
+        highlightContact((contactPicker.index + step + contactPicker.items.length) % contactPicker.items.length, true);
+      }
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      if ($("contact-dropdown").hidden) openContactPicker();
+      else if (contactPicker.index >= 0) pickContact(contactPicker.items[contactPicker.index].username);
+    } else if (event.key === "Escape") {
+      event.preventDefault(); closeContactPicker(); input.select();
+    } else if (event.key === "Tab") closeContactPicker();
+  });
+  $("contact-toggle").addEventListener("click", () => {
+    if ($("contact-dropdown").hidden) openContactPicker(); else closeContactPicker();
+  });
+  document.addEventListener("click", event => {
+    if (!$("contact-picker").contains(event.target) && !$("contact-dropdown").hidden) closeContactPicker();
+  });
 }
 async function loadContacts(preserve = false) {
   const response = await api("/api/contacts");
   state.contacts = response.contacts;
+  updateDisabled();
   if (!state.contacts.length) { $("analysis").hidden = true; say("当前副本中没有找到通讯录好友。"); return; }
   const validCurrent = preserve && state.contacts.some(contact => contact.username === state.username);
   if (!validCurrent) {
@@ -417,7 +537,6 @@ async function loadContacts(preserve = false) {
     if (remembered && !state.contacts.some(contact => contact.username === remembered)) say("上次选择的联系人不在当前通讯录中，已选择默认联系人。");
     state.username = state.contacts.some(contact => contact.username === remembered) ? remembered : state.contacts[0].username;
   }
-  populateContacts();
   await chooseContact(state.username, validCurrent);
 }
 function renderStatus(status) {
@@ -552,9 +671,10 @@ function installEvents() {
   $("reinitialize").addEventListener("click", () => {
     state.initializing = true; $("initialization").hidden = false; $("database-panel").open = true; state.panelTouched = true;
   });
-  $("contact-search").addEventListener("input", populateContacts);
-  $("contact-select").addEventListener("change", () => {
-    if ($("contact-select").value) { say(""); chooseContact($("contact-select").value); }
+  installContactEvents();
+  $("type-toggle").addEventListener("click", () => {
+    state.typeExpanded = !state.typeExpanded;
+    renderMessageTypes(state.data?.types || []);
   });
   document.querySelectorAll(".date-controls").forEach(controls => {
     controls.addEventListener("change", () => {

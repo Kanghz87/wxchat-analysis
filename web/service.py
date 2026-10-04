@@ -112,7 +112,7 @@ class Service:
             self._ready()
             if self.contacts_cache is None:
                 self.contacts_cache = load_contacts(self.root / "active" / "decrypted" / "contact.db")
-            return records(self.contacts_cache[["username", "label"]])
+            return records(self.contacts_cache[["username", "label", "display_name", "nick_name", "wechat_id"]])
 
     def analyze(self, payload: dict) -> dict:
         if self.tasks.busy:

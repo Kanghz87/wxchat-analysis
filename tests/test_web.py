@@ -47,6 +47,8 @@ class WebTests(unittest.TestCase):
     def test_analysis_and_local_interfaces(self):
         contacts = self.client.get("/api/contacts").get_json()["contacts"]
         self.assertEqual(contacts[0]["label"], "测试备注 - 测试名字 - synthetic_user")
+        self.assertEqual((contacts[0]["display_name"], contacts[0]["nick_name"], contacts[0]["wechat_id"]),
+                         ("测试备注", "测试名字", "synthetic_user"))
         response = self.client.post("/api/analysis", json={"username": "synthetic_user"})
         self.assertEqual(response.status_code, 200)
         result = response.get_json()

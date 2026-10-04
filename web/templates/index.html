@@ -71,9 +71,22 @@
   <p id="loading" class="muted" role="status">正在连接本地数据库……</p>
   <section id="analysis" hidden>
     <p id="copy-note" class="muted small"></p>
-    <label for="contact-search">联系人（搜索备注、微信昵称或微信号）</label>
-    <input id="contact-search" type="search" placeholder="输入关键词筛选通讯录好友">
-    <select id="contact-select" aria-label="联系人"></select>
+    <div id="contact-picker" class="contact-picker">
+      <label id="contact-label" for="contact-search">联系人</label>
+      <div class="contact-control">
+        <span id="contact-avatar" class="contact-avatar" aria-hidden="true"></span>
+        <div class="contact-field">
+          <input id="contact-search" type="text" role="combobox" aria-labelledby="contact-label" aria-autocomplete="list" aria-expanded="false" aria-controls="contact-options" autocomplete="off" spellcheck="false" placeholder="搜索备注、微信昵称或微信号">
+          <span id="contact-subtitle" class="muted small"></span>
+        </div>
+        <button id="contact-toggle" type="button" aria-label="展开联系人列表" aria-controls="contact-options" aria-expanded="false"><span class="chevron" aria-hidden="true"></span></button>
+      </div>
+      <div id="contact-dropdown" class="contact-dropdown" hidden>
+        <p id="contact-results" class="muted small" role="status"></p>
+        <div id="contact-options" role="listbox" aria-label="通讯录好友"></div>
+        <p id="contact-empty" class="muted" hidden>没有匹配的好友，试试备注、昵称或微信号。</p>
+      </div>
+    </div>
     <p id="contact-note" class="muted small"></p>
     <p id="available-range" class="muted"></p>
     <div id="analysis-warnings"></div>
@@ -91,6 +104,7 @@
       <p class="muted small">系统、位置和名片已排除，占比按表内消息总数计算；引用回复按自身内容归类。</p>
       <div id="reference-metrics" class="metrics three"></div>
       <div id="type-table" class="table-wrap"></div>
+      <button id="type-toggle" class="disclosure-button" type="button" aria-expanded="false" aria-controls="type-table" hidden><span id="type-toggle-label"></span><span class="chevron" aria-hidden="true"></span></button>
       <p class="muted small">表情指表情包，文字中的表情符号计为文字；红包和转账按消息条数计数。</p>
     </section>
     <section class="section">
@@ -114,7 +128,11 @@
       <div class="date-controls" data-range="heatmap"><label>本图起始日期<input id="heatmap-start" type="date" min="1970-01-01"></label><label>本图结束日期<input id="heatmap-end" type="date" min="1970-01-01"></label></div>
       <p id="heatmap-count" class="muted small"></p><div id="heatmap-chart" class="chart"></div>
     </section>
-    <section class="section"><h2>最长文字消息</h2><p class="muted small">按 Python 字符数排序，最多 20 条；点击内容可展开完整文字。</p><div id="longest-table" class="table-wrap"></div></section>
+    <details id="longest-panel" class="section fold-section">
+      <summary>最长文字消息 <span id="longest-count" class="muted small"></span></summary>
+      <p class="muted small">按 Python 字符数排序，最多 20 条；点击内容可展开完整文字。</p>
+      <div id="longest-table" class="table-wrap"></div>
+    </details>
   </section>
   <footer>所有数据仅在本机处理 · 工作区、设置、数据库和密钥默认不提交 Git</footer>
 </main>
