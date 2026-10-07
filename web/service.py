@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 from threading import RLock
 
+from analysis.text_stats import text_statistics
 from core.contacts import load_contacts
 from core.errors import UserError
 from core.key_extract import extract_keys, verify_key
@@ -31,6 +32,7 @@ class Service:
         self.pending_info = None
         self.contacts_cache = None
         self.message_cache = None
+        self.text_stats_cache = None
         self.active_signature = None
         self.version = detect_version() or ""
 
@@ -69,6 +71,7 @@ class Service:
         }
         self.active_signature = self._signature()
         self.contacts_cache = self.message_cache = None
+        self.text_stats_cache = None
 
     def _pending(self) -> None:
         pending = self.root / "pending"
@@ -125,11 +128,16 @@ class Service:
             active = self.root / "active"
             databases = message_databases(active / "decrypted")
             if self.message_cache is None or self.message_cache[0] != username:
+                self.text_stats_cache = None
                 self_username = resolve_self_username(databases, self.active_info["source"])
                 if self_username is None:
                     raise UserError("无法确认本账号发送者映射，请从实际微信账号目录重新初始化。")
                 self.message_cache = (username, load_messages(databases, username, self_username))
-            return analysis_data(self.message_cache[1], payload, len(databases))
+            if self.text_stats_cache is None:
+                self.text_stats_cache = text_statistics(self.message_cache[1])
+            result = analysis_data(self.message_cache[1], payload, len(databases))
+            result["text_stats"] = self.text_stats_cache
+            return result
 
     def submit(self, payload: dict) -> dict:
         if self.tasks.busy:

@@ -10,7 +10,9 @@ import unittest
 from unittest.mock import patch
 
 from tests import test_core as fixtures
+from analysis.text_stats import text_statistics
 from core.errors import UserError
+from core.messages import conversation_table
 from web.preferences import Preferences
 from web.server import create_app
 from web.service import Service
@@ -65,6 +67,41 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.client.put("/api/preferences", json={}, headers={"Origin": "https://external.example"}).status_code, 403)
         self.assertNotIn("keys", self.client.get("/api/status").get_json()["active"])
         self.assertEqual(self.client.get("/").status_code, 200)
+
+    def test_text_stats_ignore_dates_and_invalidate_with_message_cache(self):
+        with patch("web.service.text_statistics", wraps=text_statistics) as calculate:
+            first = self.client.post("/api/analysis", json={"username": "synthetic_user"}).get_json()
+            expected = first["text_stats"]
+            self.assertEqual(expected["total"]["all_chars"], 805)
+            narrowed = self.client.post("/api/analysis", json={
+                "username": "synthetic_user", "global": {"start": "2026-09-01", "end": "2026-09-01"},
+                "charts": {"daily": {"start": "2020-01-01", "end": "2020-01-02"}},
+            }).get_json()
+            self.assertEqual(narrowed["metrics"]["total"], 2)
+            self.assertEqual(narrowed["text_stats"], expected)
+            empty_dates = self.client.post("/api/analysis", json={
+                "username": "synthetic_user", "global": {"start": "2020-01-01", "end": "2020-01-02"},
+            }).get_json()
+            self.assertEqual(empty_dates["metrics"]["total"], 0)
+            self.assertEqual(empty_dates["text_stats"], expected)
+            self.assertEqual(calculate.call_count, 1)
+
+            # 副本数据发生变化后，沿用已有版本检查，重新加载消息及文字统计。
+            plain = self.root / "active" / "decrypted" / "message_0.db"
+            with sqlite3.connect(plain) as connection:
+                connection.execute(f'UPDATE "{conversation_table("synthetic_user")}" SET message_content = ? WHERE local_id = 1', ("新增文字",))
+            with patch("web.service.validate_workspace") as validate:
+                updated = self.client.post("/api/analysis", json={"username": "synthetic_user"}).get_json()
+            validate.assert_called_once()
+            self.assertEqual(calculate.call_count, 2)
+            self.assertEqual(updated["text_stats"]["total"]["all_chars"], 806)
+
+            contacts = self.service.contacts()
+            with patch.object(self.service, "contacts", return_value=contacts + [{"username": "synthetic_empty"}]):
+                second = self.client.post("/api/analysis", json={"username": "synthetic_empty"}).get_json()
+                self.assertEqual(second["text_stats"]["total"]["all_chars"], 0)
+                self.client.post("/api/analysis", json={"username": "synthetic_user"})
+            self.assertEqual(calculate.call_count, 4)
 
     def test_four_independent_preferences_and_restart(self):
         payload = {"remember": dict.fromkeys(("theme", "contact", "dates", "viewports"), True),

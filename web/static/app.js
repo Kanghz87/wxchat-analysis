@@ -7,9 +7,9 @@ const chartNames = ["daily", "hourly", "heatmap"];
 const state = {
   preferences: JSON.parse($("initial-preferences").textContent),
   status: null, contacts: [], account: "", username: "", dates: {}, viewports: {},
-  data: null, hourly: null, rendering: false, analysisSerial: 0,
+  data: null, dataUsername: "", hourly: null, rendering: false, analysisSerial: 0,
   busy: false, loadingAnalysis: false, initializing: false, inspected: false,
-  typeExpanded: false,
+  typeExpanded: false, activityVisible: true,
   panelTouched: false, finishedTask: "", saveTimer: null, saving: false, saveAgain: false,
 };
 const contactPicker = {items: [], index: -1};
@@ -143,6 +143,18 @@ function renderMessageTypes(types) {
   $("type-toggle").setAttribute("aria-expanded", String(state.typeExpanded));
   $("type-toggle-label").textContent = state.typeExpanded ? "收起，只显示前三类" : "展开其余 " + hiddenCount + " 类";
 }
+function renderTextStatistics(stats) {
+  $("text-metrics").hidden = !stats;
+  if (stats) {
+    metric("text-metrics", [["总计", "total"], ["我发送", "me"], ["对方发送", "other"]].map(([label, scope]) =>
+      [label + " · 汉字数", number(stats[scope].chinese_chars), "所有字符数：" + number(stats[scope].all_chars)]));
+  }
+  const warning = stats?.warning || (!stats ? "请重启本机服务以启用文字统计。" : "");
+  $("text-warning").hidden = !warning;
+  $("text-warning").textContent = warning;
+  table("word-table", ["词语", "总次数", "我发送", "对方发送"], stats?.words || [],
+    warning ? "高频词暂不可用。" : "该联系人的全部记录中没有通过过滤的词语。");
+}
 function renderSummary(data) {
   const s = data.metrics;
   metric("metrics", [["总消息", number(s.total)], ["我发送", number(s.mine)],
@@ -154,6 +166,7 @@ function renderSummary(data) {
     "总消息包含 " + number(data.system_count) + " 条系统消息、" + number(data.unknown_count) + " 条发送者未识别消息，不计入双方发送数量。" : "";
   metric("reference-metrics", [["引用次数", number(data.references.total)], ["我引用", number(data.references.mine)], ["对方引用", number(data.references.other)]]);
   renderMessageTypes(data.types);
+  renderTextStatistics(data.text_stats);
   table("longest-table", ["排名", "字符数", "发送者", "时间", "内容"], data.longest, "所选日期范围内没有可解析的文字消息。");
   $("longest-count").textContent = data.longest.length + " 条";
   const available = data.available;
@@ -175,7 +188,10 @@ function renderSummary(data) {
     $(name + "-count").textContent = "统计区间：" + selected.start + " 至 " + selected.end +
       " · " + number(data.charts[name].count) + " 条消息";
   });
-  const period = data.charts.daily.period;
+  renderActivityNote(data.charts.daily.period);
+}
+function renderActivityNote(period = state.data?.charts.daily.period) {
+  $("activity-note").hidden = !state.activityVisible;
   $("activity-note").className = period ? "success" : "muted small";
   $("activity-note").textContent = period ?
     "持续高活跃：" + period.start + " 至 " + period.end + "（" + period.days + " 天），双方共 " + number(period.message_count) + " 条消息。" :
@@ -208,14 +224,22 @@ async function renderDaily(data) {
   if (data.period) {
     figure.shapes = [{type: "rect", xref: "x", yref: "paper", x0: data.period.start,
       x1: iso(millis(data.period.end) + DAY - 1), y0: 0, y1: 1,
-      fillcolor: "rgba(239,68,68,.12)", line: {width: 0}, layer: "below"}];
+      fillcolor: "rgba(239,68,68,.12)", line: {width: 0}, layer: "below",
+      name: "高活跃", showlegend: true, legendgroup: "activity",
+      visible: state.activityVisible ? true : "legendonly"}];
   }
   const gd = $("daily-chart");
   await Plotly.react(gd, traces, figure, {responsive: true, scrollZoom: true, displayModeBar: false, displaylogo: false});
   if (!gd.dataset.wired) {
     gd.dataset.wired = "true";
     gd.on("plotly_relayout", event => {
-      if (state.rendering || state.loadingAnalysis || !Object.keys(event).some(key => key.startsWith("xaxis."))) return;
+      if (state.rendering || state.loadingAnalysis) return;
+      const visible = event["shapes[0].visible"] ?? event.shapes?.[0]?.visible;
+      if (visible !== undefined) {
+        state.activityVisible = visible !== false && visible !== "legendonly";
+        renderActivityNote();
+      }
+      if (!Object.keys(event).some(key => key.startsWith("xaxis."))) return;
       state.viewports.daily = gd.layout.xaxis.range.map(value => iso(millis(value)));
       scheduleSave();
     });
@@ -365,6 +389,45 @@ function updateDisabled() {
   $("contact-search").disabled = state.busy;
   if (state.busy) closeContactPicker();
   document.querySelectorAll("input[type=date]").forEach(input => { input.disabled = state.busy; });
+  document.querySelectorAll("[data-select-dates]").forEach(button => {
+    button.disabled = state.busy || !state.data || state.data.empty;
+  });
+}
+function extendDateRanges(dates, viewports, oldEnd, nextEnd) {
+  const result = {dates: structuredClone(dates), viewports: structuredClone(viewports), changed: false};
+  if (!oldEnd || !nextEnd || nextEnd <= oldEnd) return result;
+  const shift = millis(nextEnd) - millis(oldEnd);
+  for (const name of ["global", ...chartNames]) {
+    const selected = dates[name];
+    if (!selected || selected.end !== oldEnd) continue;
+    result.dates[name].end = nextEnd;
+    result.changed = true;
+    const viewport = viewports[name];
+    if (!Array.isArray(viewport) || viewport.length !== 2) continue;
+    const bounds = viewport.map(millis);
+    if (!bounds.every(Number.isFinite) || iso(bounds[1]).slice(0, 10) !== oldEnd) continue;
+    // 已显示全部历史时保留左端；停在最新日期的局部视图则保持宽度向后移动。
+    const left = bounds[0] <= millis(selected.start) ? bounds[0] : bounds[0] + shift;
+    result.viewports[name] = [iso(left), iso(bounds[1] + shift)];
+  }
+  return result;
+}
+function applyDateRange(name, start, end, showAll = false) {
+  const names = name === "global" ? ["global", ...chartNames] : [name];
+  for (const scope of names) {
+    state.dates[scope] = {start, end};
+    if (showAll && ["daily", "hourly"].includes(scope)) {
+      state.viewports[scope] = [start, end + "T23:59:59.999"];
+    } else delete state.viewports[scope];
+  }
+  updateDateInputs(); say("");
+  return loadAnalysis();
+}
+function selectAllDates(name) {
+  if (!state.data || state.data.empty || state.busy) return;
+  const available = state.data.available;
+  const end = available.last > state.status.today ? state.status.today : available.last;
+  return applyDateRange(name, available.first, end, true);
 }
 async function loadAnalysis() {
   if (!state.username || state.busy) return;
@@ -373,12 +436,24 @@ async function loadAnalysis() {
   $("loading").hidden = false;
   $("loading").textContent = "正在加载该联系人的分片与统计……";
   try {
-    const data = await api("/api/analysis", "POST", {username: state.username, global: state.dates.global, charts: state.dates});
+    const username = state.username;
+    const oldEnd = state.dataUsername === username && !state.data?.empty ? state.data?.available.last : null;
+    let data = await api("/api/analysis", "POST", {username, global: state.dates.global, charts: state.dates});
     if (serial !== state.analysisSerial) return;
+    const nextEnd = data.available.last > state.status.today ? state.status.today : data.available.last;
+    const extended = extendDateRanges(state.dates, state.viewports, oldEnd, nextEnd);
+    if (extended.changed) {
+      data = await api("/api/analysis", "POST", {username, global: extended.dates.global, charts: extended.dates});
+      if (serial !== state.analysisSerial) return;
+      state.dates = extended.dates;
+      state.viewports = extended.viewports;
+    }
     state.data = data;
+    state.dataUsername = username;
     const fallback = {start: data.available.first, end: data.available.last > state.status.today ? state.status.today : data.available.last};
     for (const name of ["global", ...chartNames]) state.dates[name] ||= {...(state.dates.global || fallback)};
     updateDateInputs();
+    updateDisabled();
     $("analysis").hidden = false;
     renderSummary(data);
     await renderCharts();
@@ -552,7 +627,7 @@ function renderStatus(status) {
   $("source-path").textContent = active.source ? "原始路径：" + active.source : "";
   $("workspace-path").textContent = active.path ? "工作副本：" + active.path : "";
   $("copied-at").textContent = active.copied_at ? "复制时间：" + active.copied_at.replace("T", " ") + " · 数据版本：" + active.version : "";
-  $("copy-note").textContent = active.copied_at ? "分析副本复制于 " + active.copied_at.replace("T", " ") + "（本机时间）。数据需要手动更新；更新后保留当前筛选与缩放。" : "";
+  $("copy-note").textContent = active.copied_at ? "分析副本复制于 " + active.copied_at.replace("T", " ") + "（本机时间）。数据需要手动更新；截止日期停在记录末尾时会自动跟随新记录。" : "";
   $("database-count").textContent = "数据库状态 · " + (active.databases?.length || 0) + " 个库检查通过";
   $("database-list").replaceChildren();
   for (const name of active.databases || []) {
@@ -588,22 +663,25 @@ function renderStatus(status) {
 }
 async function pollStatus() {
   try {
-    const previous = state.status;
     const status = await api("/api/status");
     const accountChanged = state.account !== status.active.account;
     renderStatus(status);
     const task = status.task;
+    const completedUpdate = task?.state === "complete" && state.finishedTask !== task.id && ["decrypt", "refresh"].includes(task.action);
     if (task && task.state !== "running" && state.finishedTask !== task.id) {
       state.finishedTask = task.id;
       if (task.state === "failed") say(task.error, true);
-      if (task.state === "complete" && previous?.task?.state === "running" && ["decrypt", "refresh"].includes(task.action)) {
+      if (completedUpdate) {
         state.initializing = false; $("initialization").hidden = true;
-        say("分析副本已更新，当前联系人、日期和图表缩放已保留。");
+        say("分析副本已更新；截止日期原本停在记录末尾的范围会自动延长，历史筛选保持不变。");
       }
     }
     if (status.active.valid && !state.busy &&
-        (!state.contacts.length || accountChanged || (previous?.task?.state === "running" && ["decrypt", "refresh"].includes(previous.task.action)))) {
-      if (accountChanged) { state.dates = {}; state.viewports = {}; state.username = ""; $("contact-search").value = ""; }
+        (!state.contacts.length || accountChanged || completedUpdate)) {
+      if (accountChanged) {
+        state.dates = {}; state.viewports = {}; state.username = "";
+        state.data = null; state.dataUsername = ""; $("contact-search").value = "";
+      }
       state.account = status.active.account;
       await loadContacts(!accountChanged && !!state.username);
     }
@@ -681,13 +759,11 @@ function installEvents() {
       const name = controls.dataset.range;
       const start = $(name + "-start").value, end = $(name + "-end").value;
       if (!start || !end || start > end || end > state.status.today) { say("请选择有效的起止日期，不能选择未来日期。", true); return; }
-      state.dates[name] = {start, end};
-      if (name === "global") {
-        chartNames.forEach(chart => { state.dates[chart] = {start, end}; });
-        state.viewports = {};
-      } else delete state.viewports[name];
-      updateDateInputs(); say(""); loadAnalysis();
+      applyDateRange(name, start, end);
     });
+  });
+  document.querySelectorAll("[data-select-dates]").forEach(button => {
+    button.addEventListener("click", () => selectAllDates(button.dataset.selectDates));
   });
   document.querySelectorAll("[data-viewport]").forEach(button => {
     button.addEventListener("click", () => {

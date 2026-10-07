@@ -39,7 +39,9 @@ details > summary { cursor:pointer; padding:12px 0; user-select:none; }
 .chart-actions button { padding:5px 12px; font-size:13px; }
 #initialization { border-top:1px solid var(--border); margin-top:18px; padding-top:10px; }
 #task-progress { max-height:220px; overflow:auto; white-space:pre-wrap; font:13px/1.7 "Microsoft YaHei",sans-serif; }
-.date-controls { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin:10px 0 18px; }
+.date-controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto; gap:18px; margin:10px 0 18px; }
+.date-controls button { align-self:end; white-space:nowrap; min-height:48px; }
+.activity-method { font-size:14px; } .activity-method li { margin:6px 0; }
 .metrics { display:grid; grid-template-columns:repeat(5,1fr); gap:16px; margin:20px 0; }
 .metrics.two { grid-template-columns:1fr 1fr; } .metrics.three { grid-template-columns:repeat(3,1fr); }
 .metric { padding:14px 18px; border:1px solid var(--border); border-radius:10px; min-width:0; }
@@ -85,9 +87,15 @@ td.content summary { white-space:pre-wrap; padding:0; } td.content pre { white-s
 .fold-section[open] > summary::before { transform:rotate(45deg); }
 .fold-section[open] > summary { margin-bottom:18px; }
 .fold-section > summary .small { font-weight:400; }
+#text-metrics .metric-value { font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
 footer { text-align:center; color:var(--muted); font-size:12px; padding:35px 0 0; }
 @media(max-width:800px) {
   main { padding:22px 16px; } header { align-items:flex-start; flex-direction:column; gap:8px; } h1 { font-size:27px; }
   .database-grid { grid-template-columns:1fr; } .metrics { grid-template-columns:repeat(2,1fr); }
   .metrics.three { grid-template-columns:repeat(3,1fr); } .metric { padding:12px; } .metric-value { font-size:24px; }
+}
+@media(max-width:600px) {
+  #text-metrics { grid-template-columns:1fr; }
+  .date-controls { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+  .date-controls button { grid-column:1 / -1; justify-self:end; }
 }

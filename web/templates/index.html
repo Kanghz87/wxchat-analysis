@@ -91,10 +91,11 @@
     <p id="available-range" class="muted"></p>
     <div id="analysis-warnings"></div>
     <h3>统一日期范围</h3>
-    <p class="muted small">修改这里同步所有统计；每张图也可单独选择日期。更新聊天记录会保留当前筛选和缩放。</p>
+    <p class="muted small">修改这里同步指标、消息类型、图表和最长文字；文字统计始终统计全部记录。每张图也可单独选择日期。</p>
     <div class="date-controls" data-range="global">
       <label>起始日期<input id="global-start" type="date" min="1970-01-01"></label>
       <label>结束日期<input id="global-end" type="date" min="1970-01-01"></label>
+      <button type="button" data-select-dates="global" title="选择该联系人全部可读取日期，并同步所有图表">全选日期</button>
     </div>
     <div id="metrics" class="metrics"></div>
     <div id="peak-metrics" class="metrics two"></div>
@@ -109,24 +110,42 @@
     </section>
     <section class="section">
       <h2>每日消息趋势</h2>
-      <div class="date-controls" data-range="daily"><label>本图起始日期<input id="daily-start" type="date" min="1970-01-01"></label><label>本图结束日期<input id="daily-end" type="date" min="1970-01-01"></label></div>
+      <div class="date-controls" data-range="daily"><label>本图起始日期<input id="daily-start" type="date" min="1970-01-01"></label><label>本图结束日期<input id="daily-end" type="date" min="1970-01-01"></label><button type="button" data-select-dates="daily" title="选择该联系人全部可读取日期，只更新本图">全选日期</button></div>
       <p id="daily-count" class="muted small"></p><div id="activity-note"></div>
-      <p class="muted small">按七日平均趋势识别持续高活跃区间，长度不固定，至少三个较活跃日期；仅依据双方消息。滚轮缩放日期，左键拖动，或使用底部滑条。</p>
-      <div class="chart-actions"><button data-viewport="daily" data-range-action="recent">最近一个月</button><button data-viewport="daily" data-range-action="all">全部日期</button></div>
+      <p class="muted small">点击图例中的“高活跃”可显示或隐藏标记和区间说明。滚轮缩放日期，左键拖动，或使用底部滑条。</p>
+      <details class="activity-method"><summary>高活跃如何计算？</summary>
+        <ol class="muted small">
+          <li>补齐日历日期，只统计“我＋对方”的消息，计算以当天为中心的七日平均消息量。</li>
+          <li>用当前所选日期范围内均线的中位数作基准。在高于基准、附近七天至少三天有消息的日期中，取均线的 75% 分位数作为高点门槛。</li>
+          <li>寻找包含高点的连续区间：区间内各日的附近七天仍需至少三天有消息；均线须高于基准，且不低于“高点门槛的一半”与基准中的较高者；还要求至少三天的实际消息量达到区间门槛并高于基准。</li>
+          <li>有多个区间时选择双方消息总数最多的一段。允许短暂低谷，长度不固定；这只表示消息活跃程度。</li>
+        </ol>
+      </details>
+      <div class="chart-actions"><button data-viewport="daily" data-range-action="recent">最近一个月</button><button data-viewport="daily" data-range-action="all">显示全部</button></div>
       <div id="daily-chart" class="chart"></div>
     </section>
     <section class="section">
       <h2>24 小时消息分布</h2>
-      <div class="date-controls" data-range="hourly"><label>本图起始日期<input id="hourly-start" type="date" min="1970-01-01"></label><label>本图结束日期<input id="hourly-end" type="date" min="1970-01-01"></label></div>
+      <div class="date-controls" data-range="hourly"><label>本图起始日期<input id="hourly-start" type="date" min="1970-01-01"></label><label>本图结束日期<input id="hourly-end" type="date" min="1970-01-01"></label><button type="button" data-select-dates="hourly" title="选择该联系人全部可读取日期，只更新本图">全选日期</button></div>
       <p id="hourly-count" class="muted small"></p>
-      <div class="chart-actions"><span id="hourly-visible" class="small"></span><button data-viewport="hourly" data-range-action="recent">最近一个月</button><button data-viewport="hourly" data-range-action="all">全部日期</button></div>
+      <div class="chart-actions"><span id="hourly-visible" class="small"></span><button data-viewport="hourly" data-range-action="recent">最近一个月</button><button data-viewport="hourly" data-range-action="all">显示全部</button></div>
       <p class="muted small">滚轮缩放日期、左键拖动，柱状图按可见日期重新统计。</p>
       <div id="hourly-chart" class="chart"></div>
     </section>
     <section class="section">
       <h2>星期 × 小时热力图</h2>
-      <div class="date-controls" data-range="heatmap"><label>本图起始日期<input id="heatmap-start" type="date" min="1970-01-01"></label><label>本图结束日期<input id="heatmap-end" type="date" min="1970-01-01"></label></div>
+      <div class="date-controls" data-range="heatmap"><label>本图起始日期<input id="heatmap-start" type="date" min="1970-01-01"></label><label>本图结束日期<input id="heatmap-end" type="date" min="1970-01-01"></label><button type="button" data-select-dates="heatmap" title="选择该联系人全部可读取日期，只更新本图">全选日期</button></div>
       <p id="heatmap-count" class="muted small"></p><div id="heatmap-chart" class="chart"></div>
+    </section>
+    <section id="text-statistics" class="section">
+      <h2>文字统计</h2>
+      <p class="muted small">当前联系人的全部可读取聊天记录，不受日期筛选和图表缩放影响。只统计已识别双方的文字正文；拍一拍、系统和非文字消息已排除，引用原文不重复计入。</p>
+      <div id="text-metrics" class="metrics three"></div>
+      <p class="muted small">汉字数只计汉字；所有字符数按 Python len(content) 计算，包含字母、数字、标点、表情和正文内空白。</p>
+      <h3>高频词 · 前 10 个</h3>
+      <p class="muted small">只保留至少两个字符的词，已过滤单字、常见虚词、标点、纯数字和网址；次数按词语实际出现次数计算。</p>
+      <div id="text-warning" class="warning-box" role="status" hidden></div>
+      <div id="word-table" class="table-wrap"></div>
     </section>
     <details id="longest-panel" class="section fold-section">
       <summary>最长文字消息 <span id="longest-count" class="muted small"></span></summary>
