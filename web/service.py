@@ -5,11 +5,11 @@ from datetime import date
 from pathlib import Path
 from threading import RLock
 
-from analysis.text_stats import text_statistics
+from analysis.text_stats import text_statistics, visible_text_statistics
 from core.contacts import load_contacts
 from core.errors import UserError
 from core.key_extract import extract_keys, verify_key
-from core.messages import load_messages, resolve_self_username
+from core.messages import contact_activity, load_messages, resolve_self_username
 from core.paths import WORKSPACE_ROOT, discover_data_path, message_databases
 from core.refresh import refresh_workspace
 from core.version import VERIFIED_VERSION, detect_version
@@ -114,8 +114,13 @@ class Service:
         with self.lock:
             self._ready()
             if self.contacts_cache is None:
-                self.contacts_cache = load_contacts(self.root / "active" / "decrypted" / "contact.db")
-            return records(self.contacts_cache[["username", "label", "display_name", "nick_name", "wechat_id"]])
+                plain = self.root / "active" / "decrypted"
+                contacts = load_contacts(plain / "contact.db")
+                latest = contact_activity(message_databases(plain), contacts["username"].tolist())
+                contacts["has_messages"] = contacts["username"].map(lambda username: latest[username] is not None)
+                contacts["last_message_time"] = contacts["username"].map(lambda username: latest[username].isoformat() if latest[username] else "")
+                self.contacts_cache = contacts
+            return records(self.contacts_cache[["username", "label", "display_name", "nick_name", "wechat_id", "has_messages", "last_message_time"]])
 
     def analyze(self, payload: dict) -> dict:
         if self.tasks.busy:
@@ -136,7 +141,9 @@ class Service:
             if self.text_stats_cache is None:
                 self.text_stats_cache = text_statistics(self.message_cache[1])
             result = analysis_data(self.message_cache[1], payload, len(databases))
-            result["text_stats"] = self.text_stats_cache
+            ignored = self.preferences.read()["ignored_words"]
+            result["text_stats"] = visible_text_statistics(self.text_stats_cache, ignored)
+            result["ignored_words"] = ignored
             return result
 
     def submit(self, payload: dict) -> dict:

@@ -79,8 +79,25 @@ def text_statistics(frame: pd.DataFrame) -> dict[str, Any]:
         return result
 
     total = counters["me"] + counters["other"]
-    result["words"] = [
+    # 只留在服务内存，忽略/恢复词语时复用 Counter，不重新分词。
+    result["_word_counters"] = {"total": total, **counters}
+    result["words"] = _word_rows(result["_word_counters"], ())
+    return result
+
+
+def _word_rows(counters: dict[str, Counter[str]], ignored_words: list[str] | tuple[str, ...]) -> list[dict]:
+    ignored = set(ignored_words)
+    total = counters["total"]
+    visible = Counter({word: count for word, count in total.items() if word not in ignored}) if ignored else total
+    return [
         {"词语": word, "总次数": count, "我发送": counters["me"][word], "对方发送": counters["other"][word]}
-        for word, count in total.most_common(10)
+        for word, count in visible.most_common(10)
     ]
+
+
+def visible_text_statistics(stats: dict, ignored_words: list[str]) -> dict:
+    """网页仅获得字数与前十名，不传出完整词频 Counter。"""
+    result = {key: value for key, value in stats.items() if not key.startswith("_")}
+    if "_word_counters" in stats:
+        result["words"] = _word_rows(stats["_word_counters"], ignored_words)
     return result

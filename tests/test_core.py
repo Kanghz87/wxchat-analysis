@@ -17,7 +17,7 @@ from core.contacts import load_contacts
 from core.decrypt import check_integrity, decrypt_database, decrypt_page
 from core.errors import UserError
 from core.key_extract import verify_key
-from core.messages import conversation_table, load_messages, resolve_self_username
+from core.messages import contact_activity, conversation_table, load_messages, resolve_self_username
 from core.paths import discover_data_path, message_databases
 from core.text import decode_blob_text
 from core.message_types import REFERENCE_TYPE
@@ -146,6 +146,16 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(int(longest_text(frame).iloc[0]["字符数"]), 800)
         self.assertEqual(frame.attrs["warnings"], [])
         self.assertEqual(frame["sender"].tolist(), ["我", "对方", "对方", "我"])
+
+    def test_contact_activity_across_shards_and_empty_table(self) -> None:
+        paths = self.make_messages()
+        empty = conversation_table("synthetic_empty")
+        with closing(sqlite3.connect(paths[0])) as connection:
+            connection.execute(f'CREATE TABLE "{empty}" (local_type INTEGER, real_sender_id INTEGER, create_time INTEGER)')
+        latest = contact_activity(paths, ["synthetic_user", "synthetic_empty", "synthetic_missing"])
+        self.assertEqual(latest["synthetic_user"], datetime(2026, 9, 2, 1))
+        self.assertIsNone(latest["synthetic_empty"])
+        self.assertIsNone(latest["synthetic_missing"])
 
     def test_history_before_2025_in_additional_shard(self) -> None:
         self.make_messages()

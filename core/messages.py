@@ -11,6 +11,7 @@ from core.sqlite_utils import open_readonly
 from core.text import decode_blob_text
 from core.logging_utils import log_failure
 from core.message_types import MESSAGE_PARSE_VERSION, REFERENCE_TYPE, message_type_label, reference_reply
+from core.errors import UserError
 
 FRAME_COLUMNS = [
     "timestamp", "date", "hour", "weekday", "sender", "local_type",
@@ -23,6 +24,35 @@ SENDER_RESOLUTION_VERSION = 2
 
 def conversation_table(username: str) -> str:
     return "Msg_" + hashlib.md5(username.encode("utf-8")).hexdigest()
+
+
+def contact_activity(databases: Sequence[Path], usernames: Sequence[str]) -> dict[str, datetime | None]:
+    """读取会话是否有记录及末尾时间，不加载或解码消息正文。"""
+    latest: dict[str, datetime | None] = dict.fromkeys(usernames)
+    tables = {conversation_table(username): username for username in usernames}
+    for database in databases:
+        try:
+            with closing(open_readonly(database)) as connection:
+                existing = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+                for table in tables.keys() & existing:
+                    columns = {row[1] for row in connection.execute(f'PRAGMA table_info("{table}")')}
+                    if not REQUIRED.issubset(columns):
+                        continue
+                    value = connection.execute(f'SELECT MAX(create_time) FROM "{table}"').fetchone()[0]
+                    if value is None:
+                        continue
+                    try:
+                        timestamp = datetime.fromtimestamp(value)
+                        pd.Timestamp(timestamp).as_unit("ns")
+                    except (ValueError, TypeError, OSError, OverflowError):
+                        continue
+                    username = tables[table]
+                    if latest[username] is None or timestamp > latest[username]:
+                        latest[username] = timestamp
+        except sqlite3.DatabaseError as error:
+            log_failure("读取联系人记录索引", error)
+            raise UserError(f"{database.name} 无法读取联系人记录索引，请更新分析副本。") from None
+    return latest
 
 
 def sender_mapping(connection: sqlite3.Connection) -> dict[int, str]:

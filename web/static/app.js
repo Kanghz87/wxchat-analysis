@@ -4,13 +4,16 @@ const $ = id => document.getElementById(id);
 const DAY = 86400000;
 const options = ["theme", "contact", "dates", "viewports"];
 const chartNames = ["daily", "hourly", "heatmap"];
+const initialPreferences = JSON.parse($("initial-preferences").textContent);
 const state = {
-  preferences: JSON.parse($("initial-preferences").textContent),
+  preferences: initialPreferences,
   status: null, contacts: [], account: "", username: "", dates: {}, viewports: {},
   data: null, dataUsername: "", hourly: null, rendering: false, analysisSerial: 0,
   busy: false, loadingAnalysis: false, initializing: false, inspected: false,
   typeExpanded: false, activityVisible: true,
-  panelTouched: false, finishedTask: "", saveTimer: null, saving: false, saveAgain: false,
+  followLatest: {}, wordBusy: false,
+  contactList: {...(initialPreferences.contact_list || {only_with_messages: true, sort: "recent"})},
+  panelTouched: false, finishedTask: "", saveTimer: null, savePromise: null, saving: false, saveAgain: false,
 };
 const contactPicker = {items: [], index: -1};
 const number = value => Number(value || 0).toLocaleString("zh-CN");
@@ -125,6 +128,13 @@ function table(target, columns, rows, message) {
         full.textContent = value;
         details.append(summary, full);
         cell.append(details);
+      } else if (name === "操作") {
+        const button = document.createElement("button");
+        button.type = "button"; button.className = "word-action"; button.textContent = "忽略";
+        button.dataset.wordAction = "ignore"; button.disabled = state.busy || state.wordBusy;
+        button.setAttribute("aria-label", "忽略词语：" + row["词语"]);
+        button.addEventListener("click", () => changeIgnoredWord(row["词语"], true));
+        cell.append(button);
       } else {
         cell.textContent = name === "占比" ? Number(value).toFixed(1) + "%" :
           name === "时间" ? String(value).replace("T", " ").slice(0, 19) : String(value);
@@ -152,8 +162,34 @@ function renderTextStatistics(stats) {
   const warning = stats?.warning || (!stats ? "请重启本机服务以启用文字统计。" : "");
   $("text-warning").hidden = !warning;
   $("text-warning").textContent = warning;
-  table("word-table", ["词语", "总次数", "我发送", "对方发送"], stats?.words || [],
+  table("word-table", ["词语", "总次数", "我发送", "对方发送", "操作"], stats?.words || [],
     warning ? "高频词暂不可用。" : "该联系人的全部记录中没有通过过滤的词语。");
+  renderIgnoredWords();
+}
+function renderIgnoredWords() {
+  const words = state.preferences.ignored_words || [];
+  $("ignored-word-count").textContent = words.length + " 个";
+  $("ignored-word-list").replaceChildren();
+  if (!words.length) $("ignored-word-list").textContent = "暂无忽略词。";
+  for (const word of words) {
+    const button = document.createElement("button");
+    button.type = "button"; button.className = "word-action";
+    button.dataset.wordAction = "restore"; button.textContent = word + " · 恢复";
+    button.disabled = state.busy || state.wordBusy;
+    button.addEventListener("click", () => changeIgnoredWord(word, false));
+    $("ignored-word-list").append(button);
+  }
+}
+async function changeIgnoredWord(word, ignored) {
+  if (state.busy || state.wordBusy) return;
+  state.wordBusy = true; updateDisabled();
+  try {
+    const response = await api("/api/words/ignored", "PUT", {word, ignored});
+    state.preferences.ignored_words = response.ignored_words;
+    renderIgnoredWords();
+    await loadAnalysis();
+  } catch (error) { say("词语设置保存失败：" + error.message, true); }
+  finally { state.wordBusy = false; updateDisabled(); }
 }
 function renderSummary(data) {
   const s = data.metrics;
@@ -373,6 +409,7 @@ function updateDateInputs() {
     $(name + "-start").value = value.start;
     $(name + "-end").value = value.end;
   }
+  for (const name of ["global", ...chartNames]) $("follow-" + name).checked = !!state.followLatest[name];
 }
 function updateDisabled() {
   const status = state.status;
@@ -392,15 +429,30 @@ function updateDisabled() {
   document.querySelectorAll("[data-select-dates]").forEach(button => {
     button.disabled = state.busy || !state.data || state.data.empty;
   });
+  document.querySelectorAll("[data-follow-latest]").forEach(input => {
+    input.disabled = state.busy || !state.data || state.data.empty;
+  });
+  $("contacts-with-messages").disabled = state.busy;
+  $("contact-sort").disabled = state.busy;
+  document.querySelectorAll("[data-word-action]").forEach(button => { button.disabled = state.busy || state.wordBusy; });
 }
-function extendDateRanges(dates, viewports, oldEnd, nextEnd) {
+function resolveFollowing(dates, following, latest) {
+  const result = {...following};
+  for (const name of ["global", ...chartNames]) {
+    if (typeof result[name] !== "boolean") result[name] = !dates[name] || dates[name].end === latest;
+  }
+  return result;
+}
+function extendDateRanges(dates, viewports, following, nextEnd) {
   const result = {dates: structuredClone(dates), viewports: structuredClone(viewports), changed: false};
-  if (!oldEnd || !nextEnd || nextEnd <= oldEnd) return result;
-  const shift = millis(nextEnd) - millis(oldEnd);
+  if (!nextEnd) return result;
   for (const name of ["global", ...chartNames]) {
     const selected = dates[name];
-    if (!selected || selected.end !== oldEnd) continue;
+    if (!selected || !following[name] || selected.end === nextEnd) continue;
+    const oldEnd = selected.end;
+    const shift = millis(nextEnd) - millis(oldEnd);
     result.dates[name].end = nextEnd;
+    if (selected.start > nextEnd) result.dates[name].start = nextEnd;
     result.changed = true;
     const viewport = viewports[name];
     if (!Array.isArray(viewport) || viewport.length !== 2) continue;
@@ -412,9 +464,11 @@ function extendDateRanges(dates, viewports, oldEnd, nextEnd) {
   }
   return result;
 }
-function applyDateRange(name, start, end, showAll = false) {
+function applyDateRange(name, start, end, showAll = false, following = undefined) {
   const names = name === "global" ? ["global", ...chartNames] : [name];
   for (const scope of names) {
+    if (typeof following === "boolean") state.followLatest[scope] = following;
+    else if (state.dates[scope]?.end !== end) state.followLatest[scope] = false;
     state.dates[scope] = {start, end};
     if (showAll && ["daily", "hourly"].includes(scope)) {
       state.viewports[scope] = [start, end + "T23:59:59.999"];
@@ -427,7 +481,14 @@ function selectAllDates(name) {
   if (!state.data || state.data.empty || state.busy) return;
   const available = state.data.available;
   const end = available.last > state.status.today ? state.status.today : available.last;
-  return applyDateRange(name, available.first, end, true);
+  return applyDateRange(name, available.first, end, true, true);
+}
+function setFollowLatest(name, enabled) {
+  const names = name === "global" ? ["global", ...chartNames] : [name];
+  names.forEach(scope => { state.followLatest[scope] = enabled; });
+  updateDateInputs();
+  if (enabled) return loadAnalysis();
+  scheduleSave();
 }
 async function loadAnalysis() {
   if (!state.username || state.busy) return;
@@ -441,20 +502,25 @@ async function loadAnalysis() {
     let data = await api("/api/analysis", "POST", {username, global: state.dates.global, charts: state.dates});
     if (serial !== state.analysisSerial) return;
     const nextEnd = data.available.last > state.status.today ? state.status.today : data.available.last;
-    const extended = extendDateRanges(state.dates, state.viewports, oldEnd, nextEnd);
+    const fallback = {start: data.available.first, end: nextEnd};
+    const dates = structuredClone(state.dates);
+    for (const name of ["global", ...chartNames]) dates[name] ||= {...(dates.global || fallback)};
+    const following = resolveFollowing(dates, state.followLatest, oldEnd || nextEnd);
+    const extended = extendDateRanges(dates, state.viewports, following, nextEnd);
     if (extended.changed) {
       data = await api("/api/analysis", "POST", {username, global: extended.dates.global, charts: extended.dates});
       if (serial !== state.analysisSerial) return;
-      state.dates = extended.dates;
-      state.viewports = extended.viewports;
     }
+    state.dates = extended.dates;
+    state.viewports = extended.viewports;
+    state.followLatest = following;
     state.data = data;
     state.dataUsername = username;
-    const fallback = {start: data.available.first, end: data.available.last > state.status.today ? state.status.today : data.available.last};
-    for (const name of ["global", ...chartNames]) state.dates[name] ||= {...(state.dates.global || fallback)};
+    if (data.ignored_words) state.preferences.ignored_words = data.ignored_words;
     updateDateInputs();
     updateDisabled();
     $("analysis").hidden = false;
+    $("analysis-content").hidden = false;
     renderSummary(data);
     await renderCharts();
     if (serial === state.analysisSerial) {
@@ -474,6 +540,9 @@ function scopedView(username) {
   return state.preferences.accounts?.[state.account]?.views?.[username] || {};
 }
 async function chooseContact(username, preserve = false) {
+  if (username !== state.username && state.username && (state.saveTimer || state.saving)) {
+    await savePreferences();
+  }
   state.username = username;
   closeContactPicker();
   if (!preserve) {
@@ -482,6 +551,7 @@ async function chooseContact(username, preserve = false) {
     const saved = scopedView(username);
     state.dates = state.preferences.remember.dates ? structuredClone(saved.dates || {}) : {};
     state.viewports = state.preferences.remember.viewports ? structuredClone(saved.viewports || {}) : {};
+    state.followLatest = structuredClone(saved.follow_latest || {});
   }
   await loadAnalysis();
 }
@@ -495,7 +565,7 @@ function updateSelectedContact() {
   $("contact-search").title = contact?.label || "";
   $("contact-subtitle").textContent = contact ? contactDetail(contact) : "选择一位好友查看聊天统计";
   $("contact-avatar").textContent = contact ? Array.from(contactName(contact))[0] : "微";
-  $("contact-note").textContent = "仅显示通讯录好友 · 共 " + state.contacts.length + " 位";
+  $("contact-note").textContent = "通讯录好友共 " + state.contacts.length + " 位 · 有可读取记录 " + state.contacts.filter(item => item.has_messages).length + " 位";
 }
 function closeContactPicker() {
   $("contact-dropdown").hidden = true;
@@ -519,11 +589,17 @@ function pickContact(username) {
   say("");
   chooseContact(username);
 }
+function listedContacts(search = "") {
+  search = search.toLocaleLowerCase().trim();
+  return state.contacts.filter(contact => (!state.contactList.only_with_messages || contact.has_messages) &&
+    [contact.label, contact.display_name, contact.nick_name, contact.wechat_id, contact.username]
+      .some(value => String(value || "").toLocaleLowerCase().includes(search))).sort((left, right) =>
+        (state.contactList.sort === "recent" ? (right.last_message_time || "").localeCompare(left.last_message_time || "") : 0) ||
+        contactName(left).localeCompare(contactName(right), "zh-CN") || left.username.localeCompare(right.username));
+}
 function populateContacts() {
   const search = $("contact-search").value.toLocaleLowerCase().trim();
-  contactPicker.items = state.contacts.filter(contact =>
-    [contact.label, contact.display_name, contact.nick_name, contact.wechat_id, contact.username]
-      .some(value => String(value || "").toLocaleLowerCase().includes(search)));
+  contactPicker.items = listedContacts(search);
   $("contact-options").replaceChildren();
   contactPicker.items.forEach((contact, index) => {
     const entry = document.createElement("button");
@@ -539,7 +615,8 @@ function populateContacts() {
     const name = document.createElement("span");
     name.className = "contact-name"; name.textContent = contactName(contact);
     const detail = document.createElement("span");
-    detail.className = "muted small"; detail.textContent = contactDetail(contact);
+    detail.className = "muted small"; detail.textContent = contactDetail(contact) +
+      (contact.last_message_time ? " · 最近：" + contact.last_message_time.slice(0, 10) : " · 暂无记录");
     description.append(name, detail); entry.append(avatar, description);
     if (contact.username === state.username) {
       const check = document.createElement("span");
@@ -605,14 +682,23 @@ async function loadContacts(preserve = false) {
   state.contacts = response.contacts;
   updateDisabled();
   if (!state.contacts.length) { $("analysis").hidden = true; say("当前副本中没有找到通讯录好友。"); return; }
-  const validCurrent = preserve && state.contacts.some(contact => contact.username === state.username);
+  const eligible = listedContacts();
+  if (!eligible.length) {
+    state.username = ""; state.data = null; state.dataUsername = "";
+    $("analysis").hidden = false; $("analysis-content").hidden = true;
+    $("available-range").textContent = "当前没有可读取聊天记录的好友，可关闭上方筛选查看全部通讯录。";
+    $("analysis-warnings").replaceChildren(); closeContactPicker(); updateDisabled();
+    return;
+  }
+  const validCurrent = preserve && eligible.some(contact => contact.username === state.username);
+  let username = state.username;
   if (!validCurrent) {
     const remembered = state.preferences.remember.contact ?
       state.preferences.accounts?.[state.account]?.selected_contact : "";
-    if (remembered && !state.contacts.some(contact => contact.username === remembered)) say("上次选择的联系人不在当前通讯录中，已选择默认联系人。");
-    state.username = state.contacts.some(contact => contact.username === remembered) ? remembered : state.contacts[0].username;
+    if (remembered && !eligible.some(contact => contact.username === remembered)) say("上次选择的联系人不在当前列表中，已选择默认联系人。");
+    username = eligible.some(contact => contact.username === remembered) ? remembered : eligible[0].username;
   }
-  await chooseContact(state.username, validCurrent);
+  await chooseContact(username, validCurrent);
 }
 function renderStatus(status) {
   state.status = status;
@@ -673,7 +759,7 @@ async function pollStatus() {
       if (task.state === "failed") say(task.error, true);
       if (completedUpdate) {
         state.initializing = false; $("initialization").hidden = true;
-        say("分析副本已更新；截止日期原本停在记录末尾的范围会自动延长，历史筛选保持不变。");
+        say("分析副本已更新；开启跟随的日期范围会自动延长，固定的历史范围保持不变。");
       }
     }
     if (status.active.valid && !state.busy &&
@@ -681,6 +767,7 @@ async function pollStatus() {
       if (accountChanged) {
         state.dates = {}; state.viewports = {}; state.username = "";
         state.data = null; state.dataUsername = ""; $("contact-search").value = "";
+        state.followLatest = {};
       }
       state.account = status.active.account;
       await loadContacts(!accountChanged && !!state.username);
@@ -692,27 +779,30 @@ async function pollStatus() {
 function snapshotPreferences() {
   return {remember: Object.fromEntries(options.map(key => [key, $("remember-" + key).checked])),
     theme: document.documentElement.dataset.theme, username: state.username,
-    dates: state.dates, viewports: state.viewports};
+    dates: state.dates, viewports: state.viewports, follow_latest: state.followLatest,
+    contact_list: state.contactList};
 }
 function scheduleSave() {
   if (state.loadingAnalysis) return;
   clearTimeout(state.saveTimer);
   state.saveTimer = setTimeout(savePreferences, 500);
 }
-async function savePreferences() {
-  if (state.saving) { state.saveAgain = true; return; }
+function savePreferences() {
+  clearTimeout(state.saveTimer); state.saveTimer = null;
+  if (state.saving) { state.saveAgain = true; return state.savePromise; }
   state.saving = true;
   $("save-status").textContent = "正在保存…";
-  try {
-    state.preferences = await api("/api/preferences", "PUT", snapshotPreferences());
+  state.savePromise = api("/api/preferences", "PUT", snapshotPreferences()).then(preferences => {
+    state.preferences = preferences;
     $("save-status").textContent = "已保存到本机";
-  } catch (error) {
+  }).catch(error => {
     $("save-status").textContent = "保存失败：" + error.message;
     say("界面设置保存失败：" + error.message, true);
-  } finally {
+  }).finally(() => {
     state.saving = false;
-    if (state.saveAgain) { state.saveAgain = false; savePreferences(); }
-  }
+    if (state.saveAgain) { state.saveAgain = false; return savePreferences(); }
+  });
+  return state.savePromise;
 }
 async function startTask(action) {
   try {
@@ -723,6 +813,14 @@ async function startTask(action) {
   } catch (error) { state.busy = false; updateDisabled(); say(error.message, true); }
 }
 function installEvents() {
+  $("contacts-with-messages").checked = state.contactList.only_with_messages;
+  $("contact-sort").value = state.contactList.sort;
+  for (const id of ["contacts-with-messages", "contact-sort"]) {
+    $(id).addEventListener("change", async () => {
+      state.contactList = {only_with_messages: $("contacts-with-messages").checked, sort: $("contact-sort").value};
+      try { await loadContacts(true); scheduleSave(); } catch (error) { say(error.message, true); }
+    });
+  }
   for (const key of options) {
     $("remember-" + key).checked = state.preferences.remember[key];
     $("remember-" + key).addEventListener("change", () => {
@@ -764,6 +862,9 @@ function installEvents() {
   });
   document.querySelectorAll("[data-select-dates]").forEach(button => {
     button.addEventListener("click", () => selectAllDates(button.dataset.selectDates));
+  });
+  document.querySelectorAll("[data-follow-latest]").forEach(input => {
+    input.addEventListener("change", () => setFollowLatest(input.dataset.followLatest, input.checked));
   });
   document.querySelectorAll("[data-viewport]").forEach(button => {
     button.addEventListener("click", () => {

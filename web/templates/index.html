@@ -23,7 +23,7 @@
           <label><input id="remember-contact" type="checkbox">联系人</label>
           <label><input id="remember-dates" type="checkbox">日期范围</label>
           <label><input id="remember-viewports" type="checkbox">图表缩放</label>
-          <p class="muted small">四项独立设置，默认关闭；只保存在本机。</p>
+          <p class="muted small">以上四项默认关闭；联系人名单选项、跟随开关和忽略词自动保存在本机。</p>
           <p id="save-status" class="small" role="status"></p>
         </div>
       </details>
@@ -71,6 +71,10 @@
   <p id="loading" class="muted" role="status">正在连接本地数据库……</p>
   <section id="analysis" hidden>
     <p id="copy-note" class="muted small"></p>
+    <div class="contact-list-options">
+      <label class="switch"><input id="contacts-with-messages" type="checkbox">只看有聊天记录的好友</label>
+      <label>排列方式<select id="contact-sort"><option value="recent">最近聊天优先</option><option value="name">按备注 / 昵称排序</option></select></label>
+    </div>
     <div id="contact-picker" class="contact-picker">
       <label id="contact-label" for="contact-search">联系人</label>
       <div class="contact-control">
@@ -90,8 +94,9 @@
     <p id="contact-note" class="muted small"></p>
     <p id="available-range" class="muted"></p>
     <div id="analysis-warnings"></div>
-    <h3>统一日期范围</h3>
-    <p class="muted small">修改这里同步指标、消息类型、图表和最长文字；文字统计始终统计全部记录。每张图也可单独选择日期。</p>
+    <div id="analysis-content">
+    <div class="range-heading"><h3>统一日期范围</h3><label class="switch"><input id="follow-global" type="checkbox" data-follow-latest="global">跟随最新日期</label></div>
+    <p class="muted small">统一范围和跟随开关会同步三张图，也可单独调整各图。手动修改截止日期会关闭对应范围的跟随；全选日期会重新开启。固定日期跨重启保留需开启“记住日期范围”。文字统计始终统计全部记录。</p>
     <div class="date-controls" data-range="global">
       <label>起始日期<input id="global-start" type="date" min="1970-01-01"></label>
       <label>结束日期<input id="global-end" type="date" min="1970-01-01"></label>
@@ -109,7 +114,7 @@
       <p class="muted small">表情指表情包，文字中的表情符号计为文字；红包和转账按消息条数计数。</p>
     </section>
     <section class="section">
-      <h2>每日消息趋势</h2>
+      <div class="range-heading"><h2>每日消息趋势</h2><label class="switch"><input id="follow-daily" type="checkbox" data-follow-latest="daily">跟随最新日期</label></div>
       <div class="date-controls" data-range="daily"><label>本图起始日期<input id="daily-start" type="date" min="1970-01-01"></label><label>本图结束日期<input id="daily-end" type="date" min="1970-01-01"></label><button type="button" data-select-dates="daily" title="选择该联系人全部可读取日期，只更新本图">全选日期</button></div>
       <p id="daily-count" class="muted small"></p><div id="activity-note"></div>
       <p class="muted small">点击图例中的“高活跃”可显示或隐藏标记和区间说明。滚轮缩放日期，左键拖动，或使用底部滑条。</p>
@@ -125,7 +130,7 @@
       <div id="daily-chart" class="chart"></div>
     </section>
     <section class="section">
-      <h2>24 小时消息分布</h2>
+      <div class="range-heading"><h2>24 小时消息分布</h2><label class="switch"><input id="follow-hourly" type="checkbox" data-follow-latest="hourly">跟随最新日期</label></div>
       <div class="date-controls" data-range="hourly"><label>本图起始日期<input id="hourly-start" type="date" min="1970-01-01"></label><label>本图结束日期<input id="hourly-end" type="date" min="1970-01-01"></label><button type="button" data-select-dates="hourly" title="选择该联系人全部可读取日期，只更新本图">全选日期</button></div>
       <p id="hourly-count" class="muted small"></p>
       <div class="chart-actions"><span id="hourly-visible" class="small"></span><button data-viewport="hourly" data-range-action="recent">最近一个月</button><button data-viewport="hourly" data-range-action="all">显示全部</button></div>
@@ -133,7 +138,7 @@
       <div id="hourly-chart" class="chart"></div>
     </section>
     <section class="section">
-      <h2>星期 × 小时热力图</h2>
+      <div class="range-heading"><h2>星期 × 小时热力图</h2><label class="switch"><input id="follow-heatmap" type="checkbox" data-follow-latest="heatmap">跟随最新日期</label></div>
       <div class="date-controls" data-range="heatmap"><label>本图起始日期<input id="heatmap-start" type="date" min="1970-01-01"></label><label>本图结束日期<input id="heatmap-end" type="date" min="1970-01-01"></label><button type="button" data-select-dates="heatmap" title="选择该联系人全部可读取日期，只更新本图">全选日期</button></div>
       <p id="heatmap-count" class="muted small"></p><div id="heatmap-chart" class="chart"></div>
     </section>
@@ -146,12 +151,17 @@
       <p class="muted small">只保留至少两个字符的词，已过滤单字、常见虚词、标点、纯数字和网址；次数按词语实际出现次数计算。</p>
       <div id="text-warning" class="warning-box" role="status" hidden></div>
       <div id="word-table" class="table-wrap"></div>
+      <details><summary>已忽略的词 <span id="ignored-word-count" class="muted small"></span></summary>
+        <p class="muted small">点击排行中的“忽略”，自动用后面的词补齐前十。忽略词在本机保存，对所有联系人生效；可在这里恢复，不影响字数统计。</p>
+        <div id="ignored-word-list" class="ignored-words"></div>
+      </details>
     </section>
     <details id="longest-panel" class="section fold-section">
       <summary>最长文字消息 <span id="longest-count" class="muted small"></span></summary>
       <p class="muted small">按 Python 字符数排序，最多 20 条；点击内容可展开完整文字。</p>
       <div id="longest-table" class="table-wrap"></div>
     </details>
+    </div>
   </section>
   <footer>所有数据仅在本机处理 · 工作区、设置、数据库和密钥默认不提交 Git</footer>
 </main>

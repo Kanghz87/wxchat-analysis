@@ -13,7 +13,8 @@ CHARTS = ("global", "daily", "hourly", "heatmap")
 
 
 def defaults() -> dict:
-    return {"remember": dict.fromkeys(OPTIONS, False), "accounts": {}}
+    return {"remember": dict.fromkeys(OPTIONS, False), "accounts": {}, "ignored_words": [],
+            "contact_list": {"only_with_messages": True, "sort": "recent"}}
 
 
 class Preferences:
@@ -41,8 +42,13 @@ class Preferences:
                 raise ValueError()
             if not all(isinstance(account, dict) for account in data["accounts"].values()):
                 raise ValueError()
+            data["contact_list"] = self._contact_list(data.get("contact_list", defaults()["contact_list"]))
+            ignored = data.get("ignored_words", [])
+            if not isinstance(ignored, list) or not all(isinstance(word, str) for word in ignored):
+                raise ValueError()
+            data["ignored_words"] = list(dict.fromkeys(self._word(word) for word in ignored))
             return data
-        except (OSError, ValueError, TypeError):
+        except (OSError, ValueError, TypeError, UserError):
             return {**defaults(), "warning": "界面设置无法读取，已使用默认值；重新保存设置即可恢复。"}
 
     def save(self, payload: dict, account: str) -> dict:
@@ -53,6 +59,8 @@ class Preferences:
             if not isinstance(flags, dict) or any(not isinstance(flags.get(key), bool) for key in OPTIONS):
                 raise UserError("四项记忆选项必须为开启或关闭。")
             result["remember"] = {key: flags[key] for key in OPTIONS}
+            if "contact_list" in payload:
+                result["contact_list"] = self._contact_list(payload["contact_list"])
             theme = payload.get("theme", "light")
             if theme not in ("light", "dark"):
                 raise UserError("无效的主题。")
@@ -78,6 +86,11 @@ class Preferences:
                 if flags["contact"]:
                     saved["selected_contact"] = username
                 view = saved.setdefault("views", {}).setdefault(username, {})
+                if "follow_latest" in payload:
+                    follow = payload["follow_latest"]
+                    if not isinstance(follow, dict) or any(key not in CHARTS or not isinstance(value, bool) for key, value in follow.items()):
+                        raise UserError("跟随最新日期选项无效。")
+                    view["follow_latest"] = dict(follow)
                 if flags["dates"]:
                     view["dates"] = self._dates(payload.get("dates", {}))
                 if flags["viewports"]:
@@ -91,6 +104,33 @@ class Preferences:
                     del result["accounts"][key]
             write_json(self.path, result)
             return deepcopy(result)
+
+    def set_ignored_word(self, word: str, ignored: bool) -> list[str]:
+        word = self._word(word)
+        if not isinstance(ignored, bool):
+            raise UserError("词语忽略选项必须为开启或关闭。")
+        with self.lock:
+            result = self._read()
+            result.pop("warning", None)
+            words = result["ignored_words"]
+            if ignored and word not in words:
+                words.append(word)
+            elif not ignored and word in words:
+                words.remove(word)
+            write_json(self.path, result)
+            return list(words)
+
+    @staticmethod
+    def _word(value: str) -> str:
+        if not isinstance(value, str) or not 2 <= len(value.strip()) <= 256:
+            raise UserError("请选择有效的词语。")
+        return value.strip().casefold()
+
+    @staticmethod
+    def _contact_list(value: dict) -> dict:
+        if not isinstance(value, dict) or not isinstance(value.get("only_with_messages"), bool) or value.get("sort") not in ("recent", "name"):
+            raise UserError("联系人列表选项无效。")
+        return {"only_with_messages": value["only_with_messages"], "sort": value["sort"]}
 
     @staticmethod
     def _dates(value: dict) -> dict:

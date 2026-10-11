@@ -1,5 +1,6 @@
 """HTML 接口与偏好的最小回归，仅使用合成数据库。"""
 from datetime import date
+from contextlib import closing
 import json
 from pathlib import Path
 import shutil
@@ -47,10 +48,13 @@ class WebTests(unittest.TestCase):
         self.client = self.app.test_client()
 
     def test_analysis_and_local_interfaces(self):
+        self.assertEqual(self.client.get("/api/health").get_json(), {"app": "wxchat-analysis"})
         contacts = self.client.get("/api/contacts").get_json()["contacts"]
         self.assertEqual(contacts[0]["label"], "测试备注 - 测试名字 - synthetic_user")
         self.assertEqual((contacts[0]["display_name"], contacts[0]["nick_name"], contacts[0]["wechat_id"]),
                          ("测试备注", "测试名字", "synthetic_user"))
+        self.assertTrue(contacts[0]["has_messages"])
+        self.assertEqual(contacts[0]["last_message_time"], "2026-09-02T01:00:00")
         response = self.client.post("/api/analysis", json={"username": "synthetic_user"})
         self.assertEqual(response.status_code, 200)
         result = response.get_json()
@@ -123,6 +127,45 @@ class WebTests(unittest.TestCase):
         self.assertIn("viewports", view)
         (self.root / "preferences.json").write_text("{broken", encoding="utf-8")
         self.assertIn("warning", self.service.preferences.read())
+
+    def test_following_and_contact_list_preferences_survive_restart(self):
+        flags = dict.fromkeys(("theme", "contact", "dates", "viewports"), False)
+        follows = {"global": True, "daily": False, "hourly": True, "heatmap": False}
+        payload = {"remember": flags, "username": "synthetic_user", "follow_latest": follows,
+                   "contact_list": {"only_with_messages": False, "sort": "name"}}
+        response = self.client.put("/api/preferences", json=payload)
+        self.assertEqual(response.status_code, 200)
+        restarted = Preferences(self.root / "preferences.json").read()
+        view = restarted["accounts"][self.service.active_info["account"]]["views"]["synthetic_user"]
+        self.assertEqual(view["follow_latest"], follows)
+        self.assertNotIn("dates", view)
+        self.assertEqual(restarted["contact_list"], payload["contact_list"])
+        self.client.put("/api/words/ignored", json={"word": "测试", "ignored": True})
+        self.client.put("/api/preferences", json=payload)
+        self.assertEqual(Preferences(self.root / "preferences.json").read()["ignored_words"], ["测试"])
+
+    def test_ignore_and_restore_backfill_top_ten_without_retokenizing(self):
+        vocabulary = ["word" + chr(ord("a") + i) for i in range(15)]
+        content = " ".join(word for i, word in enumerate(vocabulary) for _ in range(15 - i))
+        plain = self.root / "active" / "decrypted" / "message_0.db"
+        with closing(sqlite3.connect(plain)) as connection:
+            connection.execute(f'UPDATE "{conversation_table("synthetic_user")}" SET message_content = ? WHERE local_id = 1', (content,))
+            connection.commit()
+        self.service._activate(verify=False)
+        with patch("web.service.text_statistics", wraps=text_statistics) as calculate:
+            initial = self.client.post("/api/analysis", json={"username": "synthetic_user"}).get_json()["text_stats"]
+            top = initial["words"][0]["词语"]
+            self.assertNotIn("_word_counters", initial)
+            self.assertEqual(self.client.put("/api/words/ignored", json={"word": top, "ignored": True}).status_code, 200)
+            hidden = self.client.post("/api/analysis", json={"username": "synthetic_user"}).get_json()["text_stats"]
+            self.assertEqual(len(hidden["words"]), 10)
+            self.assertNotIn(top, {item["词语"] for item in hidden["words"]})
+            self.assertEqual(hidden["total"], initial["total"])
+            self.assertEqual(Preferences(self.root / "preferences.json").read()["ignored_words"], [top])
+            self.client.put("/api/words/ignored", json={"word": top, "ignored": False})
+            restored = self.client.post("/api/analysis", json={"username": "synthetic_user"}).get_json()["text_stats"]
+            self.assertEqual(restored, initial)
+            self.assertEqual(calculate.call_count, 1)
 
     def test_single_task_and_failed_refresh_keeps_active(self):
         entered, release = Event(), Event()

@@ -66,6 +66,10 @@ def create_app(service: Service | None = None, initialize: bool = True) -> Flask
         response.headers["Cache-Control"] = "private, max-age=3600"
         return response
 
+    @app.get("/api/health")
+    def health():
+        return jsonify(app="wxchat-analysis")
+
     @app.get("/api/status")
     def status():
         return jsonify(service.status())
@@ -102,6 +106,11 @@ def create_app(service: Service | None = None, initialize: bool = True) -> Flask
     @app.put("/api/preferences")
     def save_preferences():
         return jsonify(service.preferences.save(body(), service.active_info.get("account", "")))
+
+    @app.put("/api/words/ignored")
+    def ignore_word():
+        payload = body()
+        return jsonify(ignored_words=service.preferences.set_ignored_word(payload.get("word"), payload.get("ignored")))
 
     if initialize:
         service.startup()

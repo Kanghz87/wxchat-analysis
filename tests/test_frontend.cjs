@@ -17,8 +17,12 @@ function setup() {
   function element(id) {
     if (!elements.has(id)) elements.set(id, {
       textContent: id === "initial-preferences" ? "{}" : "", hidden: false,
-      dataset: {}, handlers: {}, value: "", style: {},
+      dataset: {}, handlers: {}, value: "", style: {}, checked: false,
+      children: [],
       on(name, handler) { this.handlers[name] = handler; },
+      setAttribute(name, value) { this[name] = value; },
+      removeAttribute(name) { delete this[name]; },
+      replaceChildren(...children) { this.children = children; },
     });
     return elements.get(id);
   }
@@ -32,11 +36,12 @@ function setup() {
   });
   vm.runInContext(script.slice(0, script.lastIndexOf("installEvents();")), context);
   vm.runInContext("renderSummary = () => {}; renderCharts = async () => {}; scheduleSave = () => {};", context);
-  const functions = vm.runInContext("({state, extendDateRanges, loadAnalysis, selectAllDates, renderDaily, pollStatus})", context);
+  const functions = vm.runInContext("({state, extendDateRanges, resolveFollowing, loadAnalysis, selectAllDates, setFollowLatest, applyDateRange, listedContacts, loadContacts, chooseContact, changeIgnoredWord, renderDaily, pollStatus})", context);
   Object.assign(functions.state, {
     account: "synthetic_account", username: "synthetic_user", dataUsername: "synthetic_user",
     status: {today: "2026-10-07", active: {valid: true}},
     dates: dates("2026-10-02"), data: available("2026-10-02"),
+    preferences: {remember: {theme: false, contact: false, dates: false, viewports: false}, accounts: {}},
   });
   const requests = [], replies = [];
   context.fetch = async (url, options) => {
@@ -57,7 +62,8 @@ test("更新只延长停在旧末尾的日期与视图，不改历史范围", ()
     hourly: ["2026-09-03", "2026-10-02T23:59:59.999Z"],
   };
   const before = plain(h.state.dates);
-  const result = h.extendDateRanges(h.state.dates, viewports, "2026-10-02", "2026-10-07");
+  const following = {global: true, daily: true, hourly: true, heatmap: false};
+  const result = h.extendDateRanges(h.state.dates, viewports, following, "2026-10-07");
   assert.equal(result.changed, true);
   for (const name of ["global", "daily", "hourly"]) assert.equal(result.dates[name].end, "2026-10-07");
   assert.equal(result.dates.heatmap.end, "2026-09-20");
@@ -66,8 +72,8 @@ test("更新只延长停在旧末尾的日期与视图，不改历史范围", ()
   assert.deepEqual(plain(h.state.dates), before);
   assert.equal(viewports.daily[0], "2026-09-01");
   const historical = {daily: ["2026-09-02", "2026-09-15"]};
-  assert.deepEqual(plain(h.extendDateRanges(h.state.dates, historical, "2026-10-02", "2026-10-07").viewports), historical);
-  assert.equal(h.extendDateRanges(h.state.dates, {}, "2026-10-02", "2026-10-02").changed, false);
+  assert.deepEqual(plain(h.extendDateRanges(h.state.dates, historical, following, "2026-10-07").viewports), historical);
+  assert.equal(h.extendDateRanges(h.state.dates, {}, following, "2026-10-02").changed, false);
 });
 
 test("更新后重新请求新范围统计，并限制截止日期不超过今天", async () => {
@@ -174,4 +180,89 @@ test("首次轮询即已完成的更新也加载新分析，同一任务仅加�
   await changed.pollStatus();
   assert.equal(changed.state.data, null);
   assert.equal(changed.state.dataUsername, "");
+});
+
+test("记住跟随后重启仍延长，显式关闭的旧末尾保持固定", async () => {
+  const h = setup();
+  h.state.data = null; h.state.dataUsername = "";
+  h.state.followLatest = {global: true, daily: false, hourly: true, heatmap: true};
+  h.replies.push(available("2026-10-07"), available("2026-10-07"));
+  await h.loadAnalysis();
+  assert.equal(h.state.dates.global.end, "2026-10-07");
+  assert.equal(h.state.dates.daily.end, "2026-10-02");
+  assert.equal(h.element("follow-global").checked, true);
+  assert.equal(h.element("follow-daily").checked, false);
+  assert.deepEqual(plain(h.resolveFollowing(dates("2026-09-20"), {}, "2026-10-02")),
+    {global: false, daily: false, hourly: false, heatmap: false});
+});
+
+test("关闭统一跟随同步各图，手动修改本图截止日期只关闭本图", async () => {
+  const h = setup();
+  h.setFollowLatest("global", false);
+  assert.ok(Object.values(h.state.followLatest).every(value => value === false));
+  h.replies.push(available("2026-10-07"));
+  await h.loadAnalysis();
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.state.dates.global.end, "2026-10-02");
+  h.state.followLatest.global = true;
+  h.replies.push(available("2026-10-07"), available("2026-10-07"));
+  await h.applyDateRange("daily", "2026-09-01", "2026-09-20");
+  assert.equal(h.state.followLatest.daily, false);
+  assert.equal(h.state.followLatest.global, true);
+  assert.equal(h.state.dates.daily.end, "2026-09-20");
+});
+
+test("联系人按记录筛选与最近时间排序，搜索仍匹配昵称和微信号", () => {
+  const h = setup();
+  h.state.contacts = [
+    {username: "older", display_name: "A", nick_name: "小明", wechat_id: "old-id", has_messages: true, last_message_time: "2026-09-01T12:00:00"},
+    {username: "recent", display_name: "B", has_messages: true, last_message_time: "2026-10-07T12:00:00"},
+    {username: "empty", display_name: "C", has_messages: false, last_message_time: ""},
+  ];
+  assert.deepEqual(plain(h.listedContacts()).map(item => item.username), ["recent", "older"]);
+  assert.equal(h.listedContacts("小明")[0].username, "older");
+  assert.equal(h.listedContacts("old-id")[0].username, "older");
+  h.state.contactList = {only_with_messages: false, sort: "name"};
+  assert.deepEqual(plain(h.listedContacts()).map(item => item.username), ["older", "recent", "empty"]);
+});
+
+test("全部好友都无记录时仍显示筛选控件，可以切回全部通讯录", async () => {
+  const h = setup();
+  const contacts = [{username: "synthetic_empty", display_name: "测试", has_messages: false, last_message_time: ""}];
+  h.replies.push({contacts});
+  await h.loadContacts();
+  assert.equal(h.element("analysis").hidden, false);
+  assert.equal(h.element("analysis-content").hidden, true);
+  h.state.contactList.only_with_messages = false;
+  h.replies.push({contacts}, {...available("2026-10-07"), empty: true});
+  await h.loadContacts(true);
+  assert.equal(h.state.username, "synthetic_empty");
+  assert.equal(h.element("analysis-content").hidden, false);
+});
+
+test("忽略词写入本机后刷新排行，请求失败时保留原忽略词", async () => {
+  const h = setup();
+  vm.runInContext("renderIgnoredWords = () => {};", h.context);
+  h.replies.push({ignored_words: ["晚安"]}, {...available("2026-10-02"), ignored_words: ["晚安"]});
+  await h.changeIgnoredWord("晚安", true);
+  assert.equal(h.requests[0].url, "/api/words/ignored");
+  assert.deepEqual(h.requests[0].body, {word: "晚安", ignored: true});
+  assert.deepEqual(plain(h.state.preferences.ignored_words), ["晚安"]);
+  h.replies.push(new Error("synthetic save failure"));
+  await h.changeIgnoredWord("晚安", false);
+  assert.deepEqual(plain(h.state.preferences.ignored_words), ["晚安"]);
+  assert.equal(h.state.wordBusy, false);
+});
+
+test("刚修改跟随开关便切换好友时，先保存上一位好友的设置", async () => {
+  const h = setup();
+  h.state.followLatest = {global: false, daily: false, hourly: true, heatmap: true};
+  h.state.saveTimer = 1;
+  h.replies.push(h.state.preferences, available("2026-10-02"));
+  await h.chooseContact("synthetic_other_user");
+  assert.equal(h.requests[0].url, "/api/preferences");
+  assert.equal(h.requests[0].body.username, "synthetic_user");
+  assert.equal(h.requests[0].body.follow_latest.global, false);
+  assert.equal(h.requests[1].body.username, "synthetic_other_user");
+  assert.equal(h.state.saveTimer, null);
 });
