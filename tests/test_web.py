@@ -72,6 +72,28 @@ class WebTests(unittest.TestCase):
         self.assertNotIn("keys", self.client.get("/api/status").get_json()["active"])
         self.assertEqual(self.client.get("/").status_code, 200)
 
+    def test_cumulative_chart_does_not_reset_when_dates_change(self):
+        initial = self.client.post("/api/analysis", json={"username": "synthetic_user"}).get_json()
+        chart = initial["charts"]["cumulative"]
+        self.assertEqual(chart["counts"], {"我": [1, 2], "对方": [1, 2], "总计": [2, 4]})
+        self.assertEqual(chart["counts"]["总计"][-1], initial["available"]["count"])
+        narrowed = self.client.post("/api/analysis", json={
+            "username": "synthetic_user", "global": {"start": "2026-09-02", "end": "2026-09-02"},
+        }).get_json()
+        self.assertEqual(narrowed["metrics"]["total"], 2)
+        self.assertEqual(narrowed["charts"]["cumulative"]["counts"]["总计"], [4])
+        independent = self.client.post("/api/analysis", json={
+            "username": "synthetic_user", "global": {"start": "2026-09-02", "end": "2026-09-02"},
+            "charts": {"cumulative": {"start": "2026-09-01", "end": "2026-09-06"}},
+        }).get_json()
+        self.assertEqual(independent["charts"]["daily"]["count"], 2)
+        self.assertEqual(independent["charts"]["cumulative"], chart)
+        after = self.client.post("/api/analysis", json={
+            "username": "synthetic_user", "charts": {"cumulative": {"start": "2026-09-05", "end": "2026-09-06"}},
+        }).get_json()["charts"]["cumulative"]
+        self.assertIsNone(after["bounds"])
+        self.assertEqual(after["count"], 0)
+
     def test_text_stats_ignore_dates_and_invalidate_with_message_cache(self):
         with patch("web.service.text_statistics", wraps=text_statistics) as calculate:
             first = self.client.post("/api/analysis", json={"username": "synthetic_user"}).get_json()
@@ -110,14 +132,15 @@ class WebTests(unittest.TestCase):
     def test_four_independent_preferences_and_restart(self):
         payload = {"remember": dict.fromkeys(("theme", "contact", "dates", "viewports"), True),
                    "theme": "dark", "username": "synthetic_user",
-                   "dates": {"global": {"start": "2026-09-01", "end": "2026-09-02"}},
-                   "viewports": {"daily": ["2026-09-01", "2026-09-02T23:59:59.999"]}}
+                   "dates": {name: {"start": "2026-09-01", "end": "2026-09-02"} for name in ("global", "cumulative")},
+                   "viewports": {name: ["2026-09-01", "2026-09-02T23:59:59.999"] for name in ("daily", "cumulative")}}
         self.assertEqual(self.client.put("/api/preferences", json=payload).status_code, 200)
         saved = Preferences(self.root / "preferences.json").read()
         account = saved["accounts"][self.service.active_info["account"]]
         self.assertEqual(saved["theme"], "dark")
         self.assertEqual(account["selected_contact"], "synthetic_user")
         self.assertEqual(account["views"]["synthetic_user"]["dates"], payload["dates"])
+        self.assertEqual(account["views"]["synthetic_user"]["viewports"], payload["viewports"])
         payload["remember"].update(theme=False, dates=False)
         self.client.put("/api/preferences", json=payload)
         saved = self.service.preferences.read()
@@ -130,7 +153,7 @@ class WebTests(unittest.TestCase):
 
     def test_following_and_contact_list_preferences_survive_restart(self):
         flags = dict.fromkeys(("theme", "contact", "dates", "viewports"), False)
-        follows = {"global": True, "daily": False, "hourly": True, "heatmap": False}
+        follows = {"global": True, "daily": False, "cumulative": True, "hourly": True, "heatmap": False}
         payload = {"remember": flags, "username": "synthetic_user", "follow_latest": follows,
                    "contact_list": {"only_with_messages": False, "sort": "name"}}
         response = self.client.put("/api/preferences", json=payload)

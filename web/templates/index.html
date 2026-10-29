@@ -96,7 +96,7 @@
     <div id="analysis-warnings"></div>
     <div id="analysis-content">
     <div class="range-heading"><h3>统一日期范围</h3><label class="switch"><input id="follow-global" type="checkbox" data-follow-latest="global">跟随最新日期</label></div>
-    <p class="muted small">统一范围和跟随开关会同步三张图，也可单独调整各图。手动修改截止日期会关闭对应范围的跟随；全选日期会重新开启。固定日期跨重启保留需开启“记住日期范围”。文字统计始终统计全部记录。</p>
+    <p class="muted small">统一范围和跟随开关会同步所有图表，也可单独调整各图。手动修改截止日期会关闭对应范围的跟随；全选日期会重新开启。固定日期跨重启保留需开启“记住日期范围”。文字统计始终统计全部记录。</p>
     <div class="date-controls" data-range="global">
       <label>起始日期<input id="global-start" type="date" min="1970-01-01"></label>
       <label>结束日期<input id="global-end" type="date" min="1970-01-01"></label>
@@ -128,6 +128,14 @@
       </details>
       <div class="chart-actions"><button data-viewport="daily" data-range-action="recent">最近一个月</button><button data-viewport="daily" data-range-action="all">显示全部</button></div>
       <div id="daily-chart" class="chart"></div>
+    </section>
+    <section class="section">
+      <div class="range-heading"><h2>累计消息量</h2><label class="switch"><input id="follow-cumulative" type="checkbox" data-follow-latest="cumulative">跟随最新日期</label></div>
+      <div class="date-controls" data-range="cumulative"><label>本图起始日期<input id="cumulative-start" type="date" min="1970-01-01"></label><label>本图结束日期<input id="cumulative-end" type="date" min="1970-01-01"></label><button type="button" data-select-dates="cumulative" title="选择该联系人全部可读取日期，只更新本图">全选日期</button></div>
+      <p id="cumulative-count" class="muted small"></p>
+      <p class="muted small">从该联系人最早可读取的记录开始，累加截至每天结束时的消息数；没有消息的日子保持水平。日期选择和缩放只改变显示区间，不会重新归零。总计口径与顶部总消息一致。</p>
+      <div class="chart-actions"><button data-viewport="cumulative" data-range-action="recent">最近一个月</button><button data-viewport="cumulative" data-range-action="all">显示全部</button></div>
+      <div id="cumulative-chart" class="chart"></div>
     </section>
     <section class="section">
       <div class="range-heading"><h2>24 小时消息分布</h2><label class="switch"><input id="follow-hourly" type="checkbox" data-follow-latest="hourly">跟随最新日期</label></div>

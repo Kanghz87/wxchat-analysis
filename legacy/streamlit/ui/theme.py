@@ -1,4 +1,4 @@
-"""页面与图表共用的浅色 / 黑夜配色。"""
+"""备用 Streamlit 页面与图表共用的浅色 / 黑夜配色。"""
 import json
 
 import streamlit as st

@@ -1,4 +1,4 @@
-"""轻量日期交互与高活跃区间回归，全部使用合成消息。"""
+"""备用 Streamlit 界面的交互回归，全部使用合成消息。"""
 import base64
 from datetime import date
 import json
@@ -15,8 +15,8 @@ APP = """
 from datetime import date
 import pandas as pd
 import streamlit as st
-from ui.components import render_analysis
-from ui.theme import render_theme_toggle
+from legacy.streamlit.ui.components import render_analysis
+from legacy.streamlit.ui.theme import render_theme_toggle
 render_theme_toggle()
 times = pd.to_datetime(["2022-07-02 09:00", "2022-07-03 10:00", "2024-01-01 11:00", "2024-01-01 12:00", "2026-09-20 13:00"])
 frame = pd.DataFrame({"timestamp": times, "sender": ["我", "对方", "我", "对方", "系统"], "local_type": [1, 3, 34, (6 << 32) | 49, 10000], "content": "测试", "char_count": 2, "sort_seq": 0, "source_db": "synthetic.db", "local_id": range(5)})
@@ -109,7 +109,7 @@ class DateControlsTest(unittest.TestCase):
 from datetime import date
 import pandas as pd
 import streamlit as st
-from ui.components import render_daily
+from legacy.streamlit.ui.components import render_daily
 counts = [0] * 10 + [20] * 9 + [0] * 15 + [30] * 5 + [0] * 10
 days = pd.date_range("2024-01-01", periods=len(counts)).date
 frame = pd.DataFrame([(day, "我" if i % 2 else "对方") for day, count in zip(days, counts) for i in range(count)], columns=["date", "sender"])
@@ -146,7 +146,7 @@ render_daily(frame)
     def test_refresh_button_clears_cached_analysis_after_success(self) -> None:
         source = """
 import streamlit as st
-from app import render_refresh_button
+from legacy.streamlit.app import render_refresh_button
 if "seeded" not in st.session_state:
     st.session_state["seeded"] = True
     st.session_state["selected_contact"] = "synthetic_peer"
@@ -154,7 +154,7 @@ if "seeded" not in st.session_state:
         st.session_state[key] = "old"
 render_refresh_button("4.1.13.65")
 """
-        with patch("app.refresh_workspace", return_value=Path("synthetic-active")) as refresh, patch("app.signature", return_value=("fresh",)):
+        with patch("legacy.streamlit.app.refresh_workspace", return_value=Path("synthetic-active")) as refresh, patch("legacy.streamlit.app.signature", return_value=("fresh",)):
             app = AppTest.from_string(source, default_timeout=20).run()
             refresh.assert_not_called()
             app.button(key="refresh_records").click().run()
@@ -166,7 +166,7 @@ render_refresh_button("4.1.13.65")
             for key in ("contacts", "message_cache", "date_contact", "start_date", "end_date", "chart_date_scope"):
                 self.assertNotIn(key, app.session_state)
             self.assertIn("聊天记录已更新", app.session_state["refresh_notice"])
-        with patch("app.refresh_workspace", side_effect=RuntimeError("synthetic failure")), patch("app.log_failure"):
+        with patch("legacy.streamlit.app.refresh_workspace", side_effect=RuntimeError("synthetic failure")), patch("legacy.streamlit.app.log_failure"):
             app = AppTest.from_string(source, default_timeout=20).run()
             app.button(key="refresh_records").click().run()
             self.assertFalse(app.exception)

@@ -7,7 +7,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 const script = fs.readFileSync(path.join(__dirname, "../web/static/app.js"), "utf8");
-const scopes = ["global", "daily", "hourly", "heatmap"];
+const scopes = ["global", "daily", "cumulative", "hourly", "heatmap"];
 const plain = value => JSON.parse(JSON.stringify(value));
 const dates = end => Object.fromEntries(scopes.map(name => [name, {start: "2026-09-01", end}]));
 const available = last => ({empty: false, available: {first: "2026-09-01", last}});
@@ -36,7 +36,7 @@ function setup() {
   });
   vm.runInContext(script.slice(0, script.lastIndexOf("installEvents();")), context);
   vm.runInContext("renderSummary = () => {}; renderCharts = async () => {}; scheduleSave = () => {};", context);
-  const functions = vm.runInContext("({state, extendDateRanges, resolveFollowing, loadAnalysis, selectAllDates, setFollowLatest, applyDateRange, listedContacts, loadContacts, chooseContact, changeIgnoredWord, renderDaily, pollStatus})", context);
+  const functions = vm.runInContext("({state, extendDateRanges, resolveFollowing, loadAnalysis, selectAllDates, setFollowLatest, applyDateRange, listedContacts, loadContacts, chooseContact, changeIgnoredWord, renderTrend, pollStatus})", context);
   Object.assign(functions.state, {
     account: "synthetic_account", username: "synthetic_user", dataUsername: "synthetic_user",
     status: {today: "2026-10-07", active: {valid: true}},
@@ -59,15 +59,17 @@ test("更新只延长停在旧末尾的日期与视图，不改历史范围", ()
   h.state.dates.heatmap.end = "2026-09-20";
   const viewports = {
     daily: ["2026-09-01", "2026-10-02T23:59:59.999Z"],
+    cumulative: ["2026-09-01", "2026-10-02T23:59:59.999Z"],
     hourly: ["2026-09-03", "2026-10-02T23:59:59.999Z"],
   };
   const before = plain(h.state.dates);
-  const following = {global: true, daily: true, hourly: true, heatmap: false};
+  const following = {global: true, daily: true, cumulative: true, hourly: true, heatmap: false};
   const result = h.extendDateRanges(h.state.dates, viewports, following, "2026-10-07");
   assert.equal(result.changed, true);
-  for (const name of ["global", "daily", "hourly"]) assert.equal(result.dates[name].end, "2026-10-07");
+  for (const name of ["global", "daily", "cumulative", "hourly"]) assert.equal(result.dates[name].end, "2026-10-07");
   assert.equal(result.dates.heatmap.end, "2026-09-20");
   assert.deepEqual(plain(result.viewports.daily), ["2026-09-01T00:00:00.000Z", "2026-10-07T23:59:59.999Z"]);
+  assert.deepEqual(plain(result.viewports.cumulative), plain(result.viewports.daily));
   assert.deepEqual(plain(result.viewports.hourly), ["2026-09-08T00:00:00.000Z", "2026-10-07T23:59:59.999Z"]);
   assert.deepEqual(plain(h.state.dates), before);
   assert.equal(viewports.daily[0], "2026-09-01");
@@ -105,13 +107,14 @@ test("全选统一日期同步各图，本图全选只更新本图并展开完�
   assert.deepEqual(plain(h.state.dates), dates("2026-10-07"));
   assert.deepEqual(plain(h.state.viewports.daily), ["2026-09-01", "2026-10-07T23:59:59.999"]);
   assert.deepEqual(plain(h.state.viewports.hourly), plain(h.state.viewports.daily));
+  assert.deepEqual(plain(h.state.viewports.cumulative), plain(h.state.viewports.daily));
 
   const specific = setup();
   specific.state.dates = dates("2026-09-20");
   specific.replies.push(available("2026-10-02"));
   await specific.selectAllDates("daily");
   assert.equal(specific.requests[0].body.charts.daily.end, "2026-10-02");
-  for (const name of ["global", "hourly", "heatmap"]) assert.equal(specific.state.dates[name].end, "2026-09-20");
+  for (const name of ["global", "cumulative", "hourly", "heatmap"]) assert.equal(specific.state.dates[name].end, "2026-09-20");
   assert.deepEqual(plain(specific.state.viewports.daily), ["2026-09-01", "2026-10-02T23:59:59.999"]);
 });
 
@@ -141,7 +144,7 @@ test("高活跃使用独立形状图例，隐藏状态与说明随重绘保留",
     dates: ["2026-09-01", "2026-10-02"], counts: {"我": [1, 2], "对方": [2, 3], "总计": [3, 5]},
     period: {start: "2026-09-01", end: "2026-10-02", days: 32, message_count: 8}};
   h.state.data.charts = {daily: data};
-  await h.renderDaily(data);
+  await h.renderTrend("daily", data);
   const gd = h.element("daily-chart");
   assert.equal(gd.traces.length, 3);
   assert.equal(gd.layout.shapes[0].name, "高活跃");
@@ -149,12 +152,38 @@ test("高活跃使用独立形状图例，隐藏状态与说明随重绘保留",
   gd.handlers.plotly_relayout({"shapes[0].visible": "legendonly"});
   assert.equal(h.state.activityVisible, false);
   assert.equal(h.element("activity-note").hidden, true);
-  await h.renderDaily(data);
+  await h.renderTrend("daily", data);
   assert.equal(gd.layout.shapes[0].visible, "legendonly");
   gd.handlers.plotly_relayout({"shapes[0].visible": true});
   assert.equal(h.state.activityVisible, true);
   assert.equal(h.element("activity-note").hidden, false);
   assert.match(h.element("activity-note").textContent, /32 天/);
+});
+
+test("累计图使用直线、默认完整显示，缩放和主题不改变累计值", async () => {
+  const h = setup();
+  const data = {bounds: ["2026-09-01", "2026-10-02T23:59:59.999"],
+    dates: ["2026-09-01", "2026-09-02", "2026-10-02"],
+    counts: {"我": [1, 1, 2], "对方": [1, 1, 2], "总计": [2, 2, 4]}};
+  await h.renderTrend("cumulative", data);
+  const gd = h.element("cumulative-chart");
+  assert.deepEqual(gd.traces.map(trace => trace.name), ["我", "对方", "总计"]);
+  assert.ok(gd.traces.every(trace => trace.line.shape === "linear"));
+  assert.equal(gd.layout.yaxis.title.text, "累计消息数量");
+  assert.equal(gd.layout.xaxis.minallowed, data.bounds[0]);
+  assert.equal(gd.layout.xaxis.maxallowed, data.bounds[1]);
+  assert.deepEqual(gd.layout.xaxis.range, ["2026-09-01T00:00:00.000Z", "2026-10-02T23:59:59.999Z"]);
+  assert.equal(gd.layout.shapes, undefined);
+  gd.layout.xaxis.range = ["2026-09-15", "2026-10-02T23:59:59.999"];
+  gd.handlers.plotly_relayout({"xaxis.range": gd.layout.xaxis.range});
+  assert.equal(h.state.viewports.cumulative[0], "2026-09-15T00:00:00.000Z");
+  assert.equal(h.state.viewports.daily, undefined);
+  h.context.document.documentElement.dataset.theme = "dark";
+  await h.renderTrend("cumulative", data);
+  assert.equal(gd.layout.paper_bgcolor, "#0e1117");
+  assert.deepEqual(gd.traces[2].y, [2, 2, 4]);
+  assert.equal(gd.layout.xaxis.range[0], "2026-09-15T00:00:00.000Z");
+  assert.equal(h.requests.length, 0);
 });
 
 test("首次轮询即已完成的更新也加载新分析，同一任务仅加载一次", async () => {
@@ -193,7 +222,7 @@ test("记住跟随后重启仍延长，显式关闭的旧末尾保持固定", as
   assert.equal(h.element("follow-global").checked, true);
   assert.equal(h.element("follow-daily").checked, false);
   assert.deepEqual(plain(h.resolveFollowing(dates("2026-09-20"), {}, "2026-10-02")),
-    {global: false, daily: false, hourly: false, heatmap: false});
+    {global: false, daily: false, cumulative: false, hourly: false, heatmap: false});
 });
 
 test("关闭统一跟随同步各图，手动修改本图截止日期只关闭本图", async () => {

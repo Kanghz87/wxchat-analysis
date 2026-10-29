@@ -9,7 +9,7 @@ from plotly.offline import get_plotlyjs
 import streamlit.components.v1 as components
 
 from analysis.basic import daily_counts, filter_dates, hourly_counts
-from ui.theme import palette
+from legacy.streamlit.ui.theme import palette
 
 
 def recent_range(start: date, end: date) -> tuple[date, date]:

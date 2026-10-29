@@ -79,6 +79,15 @@ def daily_counts(frame: pd.DataFrame, start: date, end: date) -> pd.DataFrame:
     return counts.reset_index()
 
 
+def cumulative_counts(frame: pd.DataFrame, start: date, end: date) -> pd.DataFrame:
+    """从全部可读取记录开始累加；起止日期仅决定返回的显示区间。"""
+    first = min(start, frame["date"].min()) if not frame.empty else start
+    daily = daily_counts(frame, first, end)
+    senders = ["我", "对方", "总计"]
+    daily[senders] = daily[senders].cumsum()
+    return daily.loc[daily["日期"] >= start].reset_index(drop=True)
+
+
 def busiest_period(daily: pd.DataFrame) -> dict[str, Any] | None:
     """在补齐日历日期的每日统计中，找持续高活跃且双方消息总量最多的一段。"""
     counts = (daily["我"] + daily["对方"]).reset_index(drop=True)

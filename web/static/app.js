@@ -3,7 +3,7 @@
 const $ = id => document.getElementById(id);
 const DAY = 86400000;
 const options = ["theme", "contact", "dates", "viewports"];
-const chartNames = ["daily", "hourly", "heatmap"];
+const chartNames = ["daily", "cumulative", "hourly", "heatmap"];
 const initialPreferences = JSON.parse($("initial-preferences").textContent);
 const state = {
   preferences: initialPreferences,
@@ -75,7 +75,7 @@ function dateAxis(name, data) {
   const colors = palette();
   return {
     type: "date", tickformat: "%m/%d", showgrid: false, zeroline: false,
-    range: safeRange(state.viewports[name], data.bounds, name === "daily" ? 1 : DAY),
+    range: safeRange(state.viewports[name] || (name === "cumulative" ? data.bounds : null), data.bounds, name === "hourly" ? DAY : 1),
     minallowed: data.bounds[0], maxallowed: data.bounds[1],
     rangeslider: {visible: true, thickness: .1, bgcolor: colors.surface, bordercolor: colors.border,
       borderwidth: 1, autorange: false, range: data.bounds},
@@ -221,8 +221,8 @@ function renderSummary(data) {
   }
   chartNames.forEach(name => {
     const selected = state.dates[name];
-    $(name + "-count").textContent = "统计区间：" + selected.start + " 至 " + selected.end +
-      " · " + number(data.charts[name].count) + " 条消息";
+    $(name + "-count").textContent = (name === "cumulative" ? "显示区间：" : "统计区间：") + selected.start + " 至 " + selected.end +
+      " · " + (name === "cumulative" ? "期间新增 " : "") + number(data.charts[name].count) + " 条消息";
   });
   renderActivityNote(data.charts.daily.period);
 }
@@ -243,44 +243,44 @@ function emptyChart(id) {
   empty.textContent = "本图所选日期范围内没有可浏览的记录。";
   gd.append(empty);
 }
-async function renderDaily(data) {
-  if (!data.bounds) { emptyChart("daily-chart"); return; }
+async function renderTrend(name, data) {
+  if (!data.bounds) { emptyChart(name + "-chart"); return; }
   const colors = palette();
-  const traces = ["我", "对方", "总计"].map((name, index) => ({
-    type: "scatter", mode: "lines+markers", name, x: data.dates, y: data.counts[name],
-    line: {color: [colors.mine, colors.other, colors.total][index], width: 2, shape: "spline", smoothing: .5},
+  const traces = ["我", "对方", "总计"].map((sender, index) => ({
+    type: "scatter", mode: "lines+markers", name: sender, x: data.dates, y: data.counts[sender],
+    line: {color: [colors.mine, colors.other, colors.total][index], width: 2, shape: name === "cumulative" ? "linear" : "spline", smoothing: .5},
     marker: {size: 4}, fill: index === 2 ? "tozeroy" : "none", fillcolor: "rgba(113,131,236,.16)",
-    hovertemplate: name + "：%{y} 条<extra></extra>",
+    hovertemplate: sender + "：%{y:,.0f} 条<extra></extra>",
   }));
   const figure = layout(480);
-  figure.xaxis = dateAxis("daily", data);
+  figure.xaxis = dateAxis(name, data);
   figure.xaxis.hoverformat = "%Y-%m-%d";
-  figure.yaxis.title = {text: "消息数量"};
-  figure.uirevision = state.account + state.username + JSON.stringify(state.dates.daily);
-  if (data.period) {
+  figure.yaxis.title = {text: name === "cumulative" ? "累计消息数量" : "消息数量"};
+  figure.uirevision = state.account + state.username + name + JSON.stringify(state.dates[name]);
+  if (name === "daily" && data.period) {
     figure.shapes = [{type: "rect", xref: "x", yref: "paper", x0: data.period.start,
       x1: iso(millis(data.period.end) + DAY - 1), y0: 0, y1: 1,
       fillcolor: "rgba(239,68,68,.12)", line: {width: 0}, layer: "below",
       name: "高活跃", showlegend: true, legendgroup: "activity",
       visible: state.activityVisible ? true : "legendonly"}];
   }
-  const gd = $("daily-chart");
+  const gd = $(name + "-chart");
   await Plotly.react(gd, traces, figure, {responsive: true, scrollZoom: true, displayModeBar: false, displaylogo: false});
   if (!gd.dataset.wired) {
     gd.dataset.wired = "true";
     gd.on("plotly_relayout", event => {
       if (state.rendering || state.loadingAnalysis) return;
       const visible = event["shapes[0].visible"] ?? event.shapes?.[0]?.visible;
-      if (visible !== undefined) {
+      if (name === "daily" && visible !== undefined) {
         state.activityVisible = visible !== false && visible !== "legendonly";
         renderActivityNote();
       }
       if (!Object.keys(event).some(key => key.startsWith("xaxis."))) return;
-      state.viewports.daily = gd.layout.xaxis.range.map(value => iso(millis(value)));
+      state.viewports[name] = gd.layout.xaxis.range.map(value => iso(millis(value)));
       scheduleSave();
     });
   }
-  state.viewports.daily = gd.layout.xaxis.range.map(value => iso(millis(value)));
+  state.viewports[name] = gd.layout.xaxis.range.map(value => iso(millis(value)));
 }
 function hourlyCounts(bounds) {
   const client = state.hourly;
@@ -305,7 +305,7 @@ function setViewport(name, value) {
   const data = state.data?.charts[name];
   const gd = $(name + "-chart");
   if (!data?.bounds || !gd.layout) return Promise.resolve();
-  const safe = safeRange(value, data.bounds, name === "daily" ? 1 : DAY);
+  const safe = safeRange(value, data.bounds, name === "hourly" ? DAY : 1);
   state.viewports[name] = safe;
   return Plotly.relayout(gd, {[rangeKey(name) + ".range"]: safe});
 }
@@ -399,7 +399,8 @@ async function renderCharts() {
   if (!state.data) return;
   state.rendering = true;
   try {
-    await renderDaily(state.data.charts.daily);
+    await renderTrend("daily", state.data.charts.daily);
+    await renderTrend("cumulative", state.data.charts.cumulative);
     await renderHourly(state.data.charts.hourly);
     await renderHeatmap(state.data.charts.heatmap);
   } finally { state.rendering = false; }
@@ -470,7 +471,7 @@ function applyDateRange(name, start, end, showAll = false, following = undefined
     if (typeof following === "boolean") state.followLatest[scope] = following;
     else if (state.dates[scope]?.end !== end) state.followLatest[scope] = false;
     state.dates[scope] = {start, end};
-    if (showAll && ["daily", "hourly"].includes(scope)) {
+    if (showAll && ["daily", "cumulative", "hourly"].includes(scope)) {
       state.viewports[scope] = [start, end + "T23:59:59.999"];
     } else delete state.viewports[scope];
   }

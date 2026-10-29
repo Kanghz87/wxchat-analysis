@@ -5,7 +5,7 @@ import json
 import pandas as pd
 
 from analysis.basic import (
-    busiest_period, daily_counts, filter_dates, longest_text, message_type_counts,
+    busiest_period, cumulative_counts, daily_counts, filter_dates, longest_text, message_type_counts,
     reference_counts, summarize, weekday_hour_counts,
 )
 from core.errors import UserError
@@ -49,7 +49,7 @@ def analysis_data(frame: pd.DataFrame, request: dict, shards: int) -> dict:
     choices = request.get("charts", {})
     if not isinstance(choices, dict):
         raise UserError("图表日期参数无效。")
-    for name in ("daily", "hourly", "heatmap"):
+    for name in ("daily", "cumulative", "hourly", "heatmap"):
         start, end = interval(choices.get(name), global_start, global_end)
         chart_frame = filter_dates(frame, start, end)
         # 选择没有数据的历史日期允许空图，右端始终不超过最新记录及今天。
@@ -59,7 +59,7 @@ def analysis_data(frame: pd.DataFrame, request: dict, shards: int) -> dict:
         if name == "heatmap":
             chart["counts"] = weekday_hour_counts(chart_frame).to_numpy().tolist()
         elif start <= end:
-            daily = daily_counts(chart_frame, start, end)
+            daily = cumulative_counts(frame, start, end) if name == "cumulative" else daily_counts(chart_frame, start, end)
             chart["dates"] = daily["日期"].astype(str).tolist()
             chart["counts"] = {sender: daily[sender].tolist() for sender in ("我", "对方", "总计")}
             if name == "daily":
@@ -67,7 +67,7 @@ def analysis_data(frame: pd.DataFrame, request: dict, shards: int) -> dict:
                 if period:
                     period = {**period, "start": period["start"].isoformat(), "end": period["end"].isoformat()}
                 chart["period"] = period
-            else:
+            elif name == "hourly":
                 matrix = chart_frame.groupby(["date", "hour"]).size().unstack(fill_value=0) if not chart_frame.empty else pd.DataFrame()
                 chart["hours"] = matrix.reindex(index=daily["日期"], columns=range(24), fill_value=0).to_numpy().tolist()
         result["charts"][name] = chart

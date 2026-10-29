@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from analysis.basic import busiest_period, daily_counts, filter_dates, longest_text, message_type_counts, reference_counts, summarize, weekday_hour_counts
-from ui.hourly_chart import date_bounds, recent_range, render_interactive_hourly
-from ui.theme import chart_palette
+from legacy.streamlit.ui.hourly_chart import date_bounds, recent_range, render_interactive_hourly
+from legacy.streamlit.ui.theme import chart_palette
 
 WAL_NOTICE = "第一版仅分析主 DB；最近尚未写回主数据库的消息可能未包含。WAL/SHM 已复制保留，暂不合并。"
 DATE_MIN = date(1970, 1, 1)

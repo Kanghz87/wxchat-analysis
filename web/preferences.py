@@ -9,7 +9,7 @@ from core.errors import UserError
 from core.workspace import write_json
 
 OPTIONS = ("theme", "contact", "dates", "viewports")
-CHARTS = ("global", "daily", "hourly", "heatmap")
+CHARTS = ("global", "daily", "cumulative", "hourly", "heatmap")
 
 
 def defaults() -> dict:
@@ -155,7 +155,7 @@ class Preferences:
             raise UserError("图表缩放设置无效。")
         result = {}
         for name, bounds in value.items():
-            if name not in ("daily", "hourly") or not isinstance(bounds, list) or len(bounds) != 2:
+            if name not in ("daily", "cumulative", "hourly") or not isinstance(bounds, list) or len(bounds) != 2:
                 raise UserError("图表缩放设置无效。")
             try:
                 parsed = [datetime.fromisoformat(item.replace("Z", "+00:00")) for item in bounds]

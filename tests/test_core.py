@@ -12,7 +12,7 @@ import unittest
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 import zstandard
 
-from analysis.basic import filter_dates, summarize, daily_counts, hourly_counts, weekday_hour_counts, longest_text
+from analysis.basic import filter_dates, summarize, daily_counts, cumulative_counts, hourly_counts, weekday_hour_counts, longest_text
 from core.contacts import load_contacts
 from core.decrypt import check_integrity, decrypt_database, decrypt_page
 from core.errors import UserError
@@ -189,6 +189,22 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(summarize(empty)["total"], 0)
         self.assertEqual(weekday_hour_counts(empty).shape, (7, 24))
 
+    def test_cumulative_counts_keep_history_and_flat_quiet_days(self) -> None:
+        frame = load_messages(self.make_messages(), "synthetic_user", "synthetic_self")
+        frame.loc[frame["date"] == date(2026, 9, 2), "date"] = date(2026, 9, 3)
+        daily = cumulative_counts(frame, date(2026, 9, 1), date(2026, 9, 3))
+        self.assertEqual(daily["日期"].tolist(), [date(2026, 9, day) for day in (1, 2, 3)])
+        self.assertEqual(daily["总计"].tolist(), [2, 2, 4])
+        self.assertEqual(daily["我"].tolist(), [1, 1, 2])
+        self.assertEqual(daily["对方"].tolist(), [1, 1, 2])
+        # 显示区间从无消息的日期开始时，也要保留此前的累计量。
+        narrowed = cumulative_counts(frame, date(2026, 9, 2), date(2026, 9, 3))
+        self.assertEqual(narrowed["总计"].tolist(), [2, 4])
+        earlier = cumulative_counts(frame, date(2020, 1, 1), date(2020, 1, 2))
+        self.assertEqual(earlier["总计"].tolist(), [0, 0])
+        empty = cumulative_counts(frame.iloc[:0], date(2026, 9, 1), date(2026, 9, 1))
+        self.assertEqual(empty["总计"].tolist(), [0])
+
     def test_unmapped_and_system_senders_do_not_become_other(self) -> None:
         paths = self.make_messages()
         table = conversation_table("synthetic_user")
@@ -210,6 +226,8 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(daily["总计"].sum(), 6)
         self.assertEqual(daily["我"].sum(), 2)
         self.assertEqual(daily["对方"].sum(), 2)
+        cumulative = cumulative_counts(frame, date(2026, 9, 1), date(2026, 9, 2))
+        self.assertEqual(cumulative[["我", "对方", "总计"]].iloc[-1].tolist(), [2, 2, 6])
 
     def test_reference_replies_use_own_body_not_quoted_message(self) -> None:
         paths = self.make_messages()
