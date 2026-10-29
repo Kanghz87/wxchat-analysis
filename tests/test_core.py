@@ -228,6 +228,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(daily["对方"].sum(), 2)
         cumulative = cumulative_counts(frame, date(2026, 9, 1), date(2026, 9, 2))
         self.assertEqual(cumulative[["我", "对方", "总计"]].iloc[-1].tolist(), [2, 2, 6])
+        self.assertNotIn("未知发送者", longest_text(frame)["内容"].tolist())
 
     def test_reference_replies_use_own_body_not_quoted_message(self) -> None:
         paths = self.make_messages()

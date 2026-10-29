@@ -1,4 +1,5 @@
 """网页调用的工作区与分析服务；不依赖 Streamlit。"""
+from collections.abc import Callable
 import hashlib
 import os
 from datetime import date
@@ -14,8 +15,8 @@ from core.paths import WORKSPACE_ROOT, discover_data_path, message_databases
 from core.refresh import refresh_workspace
 from core.version import VERIFIED_VERSION, detect_version
 from core.workspace import (
-    create_copy, decrypt_workspace, load_keys, promote_pending, raw_databases,
-    read_manifest, recover_interrupted_promotion, save_keys, validate_workspace,
+    create_copy, decrypt_workspace, file_signature, load_keys, promote_pending, raw_databases,
+    read_manifest, record_validation, recover_interrupted_promotion, save_keys, validate_workspace,
 )
 from web.data import analysis_data, records
 from web.preferences import Preferences
@@ -45,22 +46,20 @@ class Service:
             progress("正在检查已有分析副本……")
             if (self.root / "active").exists():
                 try:
-                    self._activate(verify=True)
+                    self._activate(verify=True, progress=progress)
                 except Exception as error:
                     self.active_info["error"] = error_message("验证已有工作区", error)
                     raise
             self._pending()
             progress("本地数据库检查完成。")
 
-    def _signature(self) -> tuple:
-        active = self.root / "active"
-        return tuple((str(path.relative_to(active)), path.stat().st_size, path.stat().st_mtime_ns)
-                     for path in sorted(active.rglob("*")) if path.is_file())
+    def _signature(self) -> tuple[tuple[str, int, int], ...]:
+        return file_signature(self.root / "active")
 
-    def _activate(self, verify: bool) -> None:
+    def _activate(self, verify: bool, progress: Callable[[str], None] | None = None) -> None:
         active = self.root / "active"
         if verify:
-            validate_workspace(active)
+            validate_workspace(active, progress or (lambda _: None))
         manifest = read_manifest(active)
         normalized = os.path.normcase(str(Path(manifest["source"]).resolve()))
         self.active_info = {
@@ -70,6 +69,9 @@ class Service:
             "account": hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:24],
         }
         self.active_signature = self._signature()
+        if not verify:
+            # refresh/decrypt 已逐库通过完整性检查，记录签名供下次快速校验。
+            record_validation(active)
         self.contacts_cache = self.message_cache = None
         self.text_stats_cache = None
 

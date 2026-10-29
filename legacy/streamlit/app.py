@@ -13,7 +13,7 @@ from core.paths import WORKSPACE_ROOT, discover_data_path, message_databases
 from core.refresh import refresh_workspace
 from core.version import VERIFIED_VERSION, detect_version
 from core.workspace import (
-    create_copy, decrypt_workspace, load_keys, promote_pending, raw_databases,
+    create_copy, decrypt_workspace, file_signature, load_keys, promote_pending, raw_databases,
     read_manifest, recover_interrupted_promotion, save_keys, validate_workspace,
 )
 from legacy.streamlit.ui.components import WAL_NOTICE, render_analysis
@@ -37,10 +37,7 @@ def show_error(operation: str, error: Exception) -> None:
 
 
 def signature(folder: Path) -> tuple:
-    return tuple(
-        (str(p.relative_to(folder)), p.stat().st_size, p.stat().st_mtime_ns)
-        for p in sorted(folder.rglob("*")) if p.is_file()
-    )
+    return file_signature(folder)
 
 
 def clear_analysis_cache(keep_contact: bool = False) -> None:

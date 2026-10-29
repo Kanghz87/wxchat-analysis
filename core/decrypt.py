@@ -1,7 +1,8 @@
-"""迁移自 D:/wxchat/decrypt_wechat_db.py；分页解密算法保持原样。"""
+"""解密微信数据库副本；分页解密算法保持已验证实现。"""
 from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
+import hashlib
 import os
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -27,7 +28,8 @@ def check_integrity(path: Path) -> None:
 def decrypt_database(
     src: Path, dst: Path, key_material: bytes,
     progress: Callable[[str], None] = lambda _: None,
-) -> None:
+) -> str:
+    """解密并返回明文 SHA-256，避免调用方再次读取整个数据库。"""
     if src.resolve() == dst.resolve():
         raise UserError("解密输出不能覆盖原始副本。")
     size = src.stat().st_size
@@ -37,6 +39,7 @@ def decrypt_database(
         raise UserError(f"{src.name} 未找到有效 key。")
     dst.parent.mkdir(parents=True, exist_ok=True)
     temporary = dst.with_name(dst.name + ".tmp")
+    digest = hashlib.sha256()
     progress(f"正在解密 {src.name}……")
     try:
         with src.open("rb") as source, temporary.open("wb") as target:
@@ -44,7 +47,9 @@ def decrypt_database(
                 page = source.read(PAGE_SIZE)
                 if len(page) != PAGE_SIZE:
                     raise UserError(f"{src.name} 副本读取不完整。")
-                target.write(decrypt_page(key_material, page, page_no))
+                plain = decrypt_page(key_material, page, page_no)
+                target.write(plain)
+                digest.update(plain)
             target.flush()
             os.fsync(target.fileno())
         check_integrity(temporary)
@@ -52,6 +57,7 @@ def decrypt_database(
     finally:
         temporary.unlink(missing_ok=True)
     progress(f"✓ {dst.name} integrity_check = ok")
+    return digest.hexdigest()
 
 
 def aes_cbc_decrypt(key: bytes, iv: bytes, data: bytes) -> bytes:

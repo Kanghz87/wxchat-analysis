@@ -1,4 +1,4 @@
-"""迁移自 D:/wxchat/extract_keys.py；保留内存偏移、扫描和 HMAC 算法。"""
+"""只读提取微信数据库密钥；保留已验证的内存偏移、扫描和 HMAC 算法。"""
 from __future__ import annotations
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path

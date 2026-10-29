@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 from core.text import decode_blob_text
 
 REFERENCE_TYPE = (57 << 32) | 49
+MAX_APPMSG_LENGTH = 2_000_000
 MESSAGE_PARSE_VERSION = 3
 
 BASE_TYPES = {
@@ -47,6 +48,9 @@ def reference_reply(message_content: str | bytes | None, compress_content: str |
         key=len, reverse=True,
     )
     for text in texts:
+        # 避免异常长的应用消息拖垮 XML 解析；超长内容按“未解析”处理。
+        if len(text) > MAX_APPMSG_LENGTH:
+            continue
         start = re.search(r"<(?:msg|appmsg)(?:\s|>)", text)
         if start is None:
             continue

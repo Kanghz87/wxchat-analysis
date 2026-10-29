@@ -56,12 +56,14 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
+主网页不需要 Streamlit。只有运行备用 Streamlit 界面或 `tests/test_legacy_ui.py` 时，才需要再安装 `requirements-legacy.txt`。
+
 双击 **[启动微信分析.cmd](启动微信分析.cmd)**，程序会启动本地服务并自动打开 [http://127.0.0.1:8501](http://127.0.0.1:8501)。以后也使用这个文件启动。
 
 也可以通过命令行启动：
 
 ```powershell
-.\.venv\Scripts\python.exe web_app.py --open-browser
+.\.venv\Scripts\python.exe -X utf8 web_app.py --open-browser
 ```
 
 保持启动窗口打开；按 **Ctrl+C** 或关闭启动窗口可停止服务。关闭网页不会停止服务。重复双击会打开已运行的本工具网页。端口被其他程序占用时，可以使用 `--port 8502`。
@@ -78,7 +80,7 @@ py -3.12 -m venv .venv
 
 目录中应包含 `contact/contact.db` 和 `message/message_*.db`。程序会扫描全部消息分片，支持普通文字、二进制文字容器及 zstd 长文本。
 
-已有有效工作区时会直接检查并复用，无需每次解密。需要新记录时，点击 **「更新聊天记录」**；副本不会随微信实时同步。
+已有有效工作区时会先做快速检查并复用，无需每次解密；文件变化或更新后仍会重新校验。需要新记录时，点击 **「更新聊天记录」**；副本不会随微信实时同步。
 
 详见 **[使用指南](docs/usage.md)**，包括日期筛选、累计图、高频词、更新记录和常见问题。
 
@@ -113,7 +115,8 @@ wxchat-analysis/
 ├─ app.py                 # 旧启动命令的兼容入口
 ├─ tests/                 # 合成数据测试
 ├─ docs/                  # 使用指南、开发说明与演示截图
-├─ requirements.txt       # 固定版本的 Python 依赖
+├─ requirements.txt       # 主网页的固定版本依赖
+├─ requirements-legacy.txt # 备用 Streamlit 界面的额外依赖
 ├─ AGENTS.md              # 开发助手工作约定
 └─ workspace/             # 运行时生成的私密数据，不纳入 Git
 ```

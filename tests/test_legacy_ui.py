@@ -8,7 +8,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
-from streamlit.testing.v1 import AppTest
+
+try:
+    from streamlit.testing.v1 import AppTest
+except ImportError:  # 主网页安装不包含 Streamlit；备用界面测试按需运行。
+    AppTest = None
 
 
 APP = """
@@ -33,6 +37,7 @@ def array_sum(value: list | dict) -> int:
     return int(np.asarray(value).sum())
 
 
+@unittest.skipUnless(AppTest is not None, "需要安装 requirements-legacy.txt 才能运行备用界面测试")
 class DateControlsTest(unittest.TestCase):
     def charts(self, app: AppTest) -> list[dict]:
         self.assertFalse(app.exception)

@@ -4,18 +4,18 @@
 
 ## 安装与启动
 
-按首页的「快速开始」安装 Python 3.12 64 位和依赖。日常使用双击项目根目录的 `启动微信分析.cmd`，保留启动窗口，浏览器会自动打开本地网页。
+按首页的「快速开始」安装 Python 3.12 64 位和主网页依赖。日常使用双击项目根目录的 `启动微信分析.cmd`，保留启动窗口，浏览器会自动打开本地网页。备用 Streamlit 界面属于可选组件，需要单独安装 `requirements-legacy.txt`。
 
 命令行启动方式：
 
 ```powershell
-.\.venv\Scripts\python.exe web_app.py --open-browser
+.\.venv\Scripts\python.exe -X utf8 web_app.py --open-browser
 ```
 
 不加 `--open-browser` 时手动访问 `http://127.0.0.1:8501`。更换端口：
 
 ```powershell
-.\.venv\Scripts\python.exe web_app.py --port 8502 --open-browser
+.\.venv\Scripts\python.exe -X utf8 web_app.py --port 8502 --open-browser
 ```
 
 关闭网页不会停止程序。在启动窗口按 Ctrl+C 或关闭该窗口可停止服务。
@@ -114,7 +114,7 @@
 
 ### 最长文字
 
-默认折叠，展开查看前 20 条。按 Python 字符数排序，不是字节长度；显示排名、字符数、发送者、时间和内容，受统一日期范围影响。
+默认折叠，展开查看前 20 条。按 Python 字符数排序，不是字节长度；显示排名、字符数、发送者、时间和内容，受统一日期范围影响。与文字统计一致，只显示已识别双方的文字正文，发送者未识别的消息不进入此表。
 
 ## 更新聊天记录与项目升级
 

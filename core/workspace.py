@@ -17,6 +17,30 @@ def file_hash(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def copy_and_hash(source: Path, destination: Path) -> tuple[int, str]:
+    """复制文件并在同一次读取中计算 SHA-256，避免大库重复读盘。"""
+    digest = hashlib.sha256()
+    size = 0
+    with source.open("rb") as reader, destination.open("wb") as writer:
+        while chunk := reader.read(1024 * 1024):
+            writer.write(chunk)
+            digest.update(chunk)
+            size += len(chunk)
+    return size, digest.hexdigest()
+
+
+def file_signature(folder: Path) -> tuple[tuple[str, int, int], ...]:
+    """工作区文件签名；不包含快速校验缓存自身，避免写入后签名变化。"""
+    cache = folder / "metadata" / "validation.json"
+    signature = []
+    for path in sorted(folder.rglob("*")):
+        if not path.is_file() or path == cache:
+            continue
+        stat = path.stat()
+        signature.append((path.relative_to(folder).as_posix(), stat.st_size, stat.st_mtime_ns))
+    return tuple(signature)
+
+
 def owned(path: Path) -> Path:
     root = WORKSPACE_ROOT.resolve()
     if WORKSPACE_ROOT.is_symlink() or WORKSPACE_ROOT.is_junction():
@@ -44,6 +68,26 @@ def write_json(path: Path, data: dict) -> None:
     temporary = owned(path.with_suffix(path.suffix + ".tmp"))
     temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(path)
+
+
+def save_validation(folder: Path) -> None:
+    signature = [[relative, size, modified] for relative, size, modified in file_signature(folder)]
+    write_json(folder / "metadata" / "validation.json", {
+        "validated_at": datetime.now().isoformat(timespec="seconds"),
+        "signature": signature,
+    })
+
+
+def validation_is_current(folder: Path) -> bool:
+    try:
+        data = json.loads((folder / "metadata" / "validation.json").read_text(encoding="utf-8"))
+        stored = data["signature"]
+        if not isinstance(stored, list):
+            return False
+        expected = tuple((str(item[0]), int(item[1]), int(item[2])) for item in stored)
+        return expected == file_signature(folder)
+    except (OSError, ValueError, TypeError, KeyError, IndexError):
+        return False
 
 
 def read_manifest(folder: Path) -> dict:
@@ -87,10 +131,8 @@ def create_copy(source: DataPaths, version: str, progress: Progress = lambda _: 
         relative = original.relative_to(source.root)
         destination = owned(pending / "raw" / relative)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(original, destination)
-        manifest["files"][relative.as_posix()] = {
-            "size": destination.stat().st_size, "sha256": file_hash(destination),
-        }
+        size, digest = copy_and_hash(original, destination)
+        manifest["files"][relative.as_posix()] = {"size": size, "sha256": digest}
         progress(f"已复制 {original.name}")
     current = discover_data_path(source.root)
     if set(current.files()) != set(files) or any(
@@ -114,24 +156,41 @@ def load_keys(folder: Path) -> dict[str, bytes]:
         raise UserError("工作区密钥文件缺失或无效，请重新提取数据库密钥。") from None
 
 
-def validate_workspace(folder: Path) -> None:
+def validate_workspace(folder: Path, progress: Progress = lambda _: None) -> None:
     from core.decrypt import check_integrity
     from core.key_extract import verify_key
 
     manifest = read_manifest(folder)
     if manifest.get("stage") != "ready":
         raise UserError("工作区尚未完成解密。")
+    if validation_is_current(folder):
+        progress("快速校验通过：工作区文件未发生变化。")
+        return
     keys = load_keys(folder)
     for name, raw in raw_databases(folder).items():
         relative = raw.relative_to(folder / "raw").as_posix()
+        progress(f"正在验证 {name} 的原始副本与密钥……")
         if file_hash(raw) != manifest["files"][relative]["sha256"]:
             raise UserError(f"{name} 原始副本已变化，请重新初始化。")
         if not verify_key(keys.get(name, b""), raw):
             raise UserError(f"{name} 的已保存 key 验证失败，请重新初始化。")
         plain = owned(folder / "decrypted" / name)
+        progress(f"正在验证 {name} 的解密文件与完整性……")
         if file_hash(plain) != manifest["decrypted"][name]:
             raise UserError(f"{name} 解密文件已变化，请重新初始化。")
         check_integrity(plain)
+    try:
+        save_validation(folder)
+    except (OSError, UserError):
+        progress("校验通过，但未能保存快速校验缓存。")
+
+
+def record_validation(folder: Path) -> None:
+    """用于刚完成复制/解密的受信工作区，避免下次启动重复全量校验。"""
+    try:
+        save_validation(folder)
+    except (OSError, UserError):
+        pass
 
 
 def decrypt_workspace(folder: Path, progress: Progress = lambda _: None) -> None:
@@ -148,8 +207,7 @@ def decrypt_workspace(folder: Path, progress: Progress = lambda _: None) -> None
     hashes = {}
     for name, raw in databases.items():
         destination = owned(folder / "decrypted" / name)
-        decrypt_database(raw, destination, keys[name], progress)
-        hashes[name] = file_hash(destination)
+        hashes[name] = decrypt_database(raw, destination, keys[name], progress)
     manifest["stage"] = "ready"
     manifest["decrypted"] = hashes
     save_manifest(folder, manifest)

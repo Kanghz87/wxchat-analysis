@@ -11,8 +11,10 @@
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe web_app.py
+.\.venv\Scripts\python.exe -X utf8 web_app.py
 ```
+
+主网页只依赖 `requirements.txt`。仅在运行备用 Streamlit 界面或 `tests/test_legacy_ui.py` 时，再安装 `requirements-legacy.txt`；未安装时该测试会自动跳过。
 
 手动访问 `http://127.0.0.1:8501`。只有需要自动打开浏览器时才加 `--open-browser`。开发测试不需要 Node.js 构建前端；Node.js 仅用于可选的 JavaScript 状态回归测试。
 
@@ -53,7 +55,7 @@ py -3.12 -m venv .venv
   → 只读查询副本 → 联系人消息 DataFrame → 统计 → 本地网页
 ```
 
-原始目录永远不做 SQLite 查询、写入、重命名或删除。WAL/SHM 仅复制保留，当前只分析主 DB。
+原始目录永远不做 SQLite 查询、写入、重命名或删除。WAL/SHM 仅复制保留，当前只分析主 DB。启动时如果文件签名与 `validation.json` 一致，只做快速检查；文件变化或更新后仍会逐库重算哈希并执行完整性检查。该缓存只比较路径、大小和修改时间，用于减少重复读盘，不是防篡改机制；删除 `active/metadata/validation.json` 或重新初始化即可强制完整校验。
 
 工作区在首次操作时自动生成，不属于仓库内容：
 
@@ -63,7 +65,7 @@ workspace/
 │  ├─ raw/contact/         # 原始加密副本
 │  ├─ raw/message/         # 全部分片及已有 WAL/SHM
 │  ├─ decrypted/           # 标准 SQLite 明文副本
-│  └─ metadata/            # manifest.json、keys.json（敏感）
+│  └─ metadata/            # manifest.json、keys.json（敏感）、validation.json（校验签名）
 ├─ pending/                # 初始化 / 更新的临时槽位
 ├─ previous/               # 最多一个上一版
 ├─ preferences.json        # 私密的本机偏好
@@ -88,13 +90,13 @@ workspace/
 Python 回归使用合成数据，不需要登录微信或提供真实数据库：
 
 ```powershell
-.\.venv\Scripts\python.exe -B -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -X utf8 -B -m unittest discover -s tests -v
 ```
 
 可按改动选择相关模块，例如：
 
 ```powershell
-.\.venv\Scripts\python.exe -B -m unittest tests.test_core tests.test_web -v
+.\.venv\Scripts\python.exe -X utf8 -B -m unittest tests.test_core tests.test_web -v
 ```
 
 前端状态测试只用 Node.js 内置模块，无 npm 安装步骤：
@@ -106,7 +108,7 @@ node tests/test_frontend.cjs
 启动参数检查，不开启浏览器或服务：
 
 ```powershell
-.\.venv\Scripts\python.exe -B web_app.py --help
+.\.venv\Scripts\python.exe -X utf8 -B web_app.py --help
 ```
 
 提交前检查 `git status --short`、`git diff --stat` 和 `git diff --check`。确认源码、文档和必要测试构成提交，不包含真实数据、环境和日志。测试通过后，不必为了小改动扩张异常矩阵或反复运行相同检查。

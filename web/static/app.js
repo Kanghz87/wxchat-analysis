@@ -7,7 +7,7 @@ const chartNames = ["daily", "cumulative", "hourly", "heatmap"];
 const initialPreferences = JSON.parse($("initial-preferences").textContent);
 const state = {
   preferences: initialPreferences,
-  status: null, contacts: [], account: "", username: "", dates: {}, viewports: {},
+  status: null, contacts: [], contactsLoaded: false, account: "", username: "", dates: {}, viewports: {},
   data: null, dataUsername: "", hourly: null, rendering: false, analysisSerial: 0,
   busy: false, loadingAnalysis: false, initializing: false, inspected: false,
   typeExpanded: false, activityVisible: true,
@@ -529,7 +529,15 @@ async function loadAnalysis() {
       scheduleSave();
     }
   } catch (error) {
-    if (serial === state.analysisSerial) say(error.message, true);
+    if (serial === state.analysisSerial) {
+      if (state.dataUsername !== state.username) {
+        state.data = null;
+        state.dataUsername = "";
+        $("analysis-content").hidden = true;
+      }
+      say(error.message, true);
+      updateDisabled();
+    }
   } finally {
     if (serial === state.analysisSerial) {
       state.loadingAnalysis = false;
@@ -679,8 +687,10 @@ function installContactEvents() {
   });
 }
 async function loadContacts(preserve = false) {
+  state.contactsLoaded = false;
   const response = await api("/api/contacts");
   state.contacts = response.contacts;
+  state.contactsLoaded = true;
   updateDisabled();
   if (!state.contacts.length) { $("analysis").hidden = true; say("当前副本中没有找到通讯录好友。"); return; }
   const eligible = listedContacts();
@@ -763,12 +773,12 @@ async function pollStatus() {
         say("分析副本已更新；开启跟随的日期范围会自动延长，固定的历史范围保持不变。");
       }
     }
-    if (status.active.valid && !state.busy &&
-        (!state.contacts.length || accountChanged || completedUpdate)) {
+    const needsContacts = (!state.contacts.length && !state.contactsLoaded) || accountChanged || completedUpdate;
+    if (status.active.valid && !state.busy && needsContacts) {
       if (accountChanged) {
         state.dates = {}; state.viewports = {}; state.username = "";
         state.data = null; state.dataUsername = ""; $("contact-search").value = "";
-        state.followLatest = {};
+        state.followLatest = {}; state.contactsLoaded = false;
       }
       state.account = status.active.account;
       await loadContacts(!accountChanged && !!state.username);

@@ -15,7 +15,7 @@ from core.paths import discover_data_path, message_databases
 from core.refresh import refresh_workspace
 from core.workspace import (
     create_copy, file_hash, load_keys, promote_pending, raw_databases,
-    read_manifest, save_keys, save_manifest,
+    read_manifest, save_keys, save_manifest, validate_workspace,
 )
 
 
@@ -82,6 +82,31 @@ class RefreshTests(unittest.TestCase):
 
     def message_count(self, folder: Path) -> int:
         return len(load_messages(message_databases(folder / "decrypted"), "synthetic_peer", "synthetic_self"))
+
+    def test_copy_records_hash_for_every_copied_file(self) -> None:
+        manifest = read_manifest(self.active)
+        for relative, info in manifest["files"].items():
+            path = self.active / "raw" / relative
+            self.assertEqual(info["size"], path.stat().st_size)
+            self.assertEqual(info["sha256"], file_hash(path))
+
+    def test_validation_cache_skips_unchanged_workspace(self) -> None:
+        messages = []
+        with patch("core.key_extract.verify_key", return_value=True):
+            validate_workspace(self.active, progress=messages.append)
+        self.assertTrue((self.active / "metadata" / "validation.json").is_file())
+        with patch("core.workspace.file_hash", side_effect=AssertionError("不应重复全量校验")):
+            validate_workspace(self.active, progress=messages.append)
+        self.assertTrue(any("快速校验" in message for message in messages))
+
+    def test_validation_cache_invalidates_after_file_change(self) -> None:
+        with patch("core.key_extract.verify_key", return_value=True):
+            validate_workspace(self.active)
+        with (self.active / "raw" / "message" / "message_0.db").open("ab") as stream:
+            stream.write(b"changed")
+        with patch("core.workspace.file_hash", side_effect=AssertionError("应重新全量校验")):
+            with self.assertRaises(AssertionError):
+                validate_workspace(self.active)
 
     def test_refresh_reuses_keys_and_reloads_new_messages(self) -> None:
         self.append_message()

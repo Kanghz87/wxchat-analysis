@@ -66,9 +66,9 @@
 常用命令（项目根目录）：
 
 ```powershell
-.\.venv\Scripts\python.exe -B -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -X utf8 -B -m unittest discover -s tests -v
 node tests/test_frontend.cjs
-.\.venv\Scripts\python.exe -B web_app.py --help
+.\.venv\Scripts\python.exe -X utf8 -B web_app.py --help
 git diff --check
 ```
 

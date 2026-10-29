@@ -5,7 +5,7 @@ import unittest
 import pandas as pd
 
 from analysis.basic import filter_dates, message_type_counts, reference_counts
-from core.message_types import message_type_label
+from core.message_types import MAX_APPMSG_LENGTH, message_type_label, reference_reply
 
 
 class MessageTypeTests(unittest.TestCase):
@@ -50,6 +50,11 @@ class MessageTypeTests(unittest.TestCase):
         self.assertEqual(list(result.columns), ["消息数量", "占比", "我发送", "对方发送"])
         self.assertAlmostEqual(result["占比"].sum(), 100.0)
         self.assertAlmostEqual(result.loc["文字", "占比"], 20.0)
+
+    def test_oversized_reference_payload_is_not_parsed(self) -> None:
+        payload = "<msg><appmsg><type>57</type><title>合成回复</title></appmsg></msg>"
+        self.assertIsNotNone(reference_reply(payload, None))
+        self.assertIsNone(reference_reply(payload + "x" * MAX_APPMSG_LENGTH, None))
 
     def test_date_filter_and_empty_result(self) -> None:
         frame = self.make_frame()

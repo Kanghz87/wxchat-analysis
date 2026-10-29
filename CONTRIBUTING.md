@@ -24,12 +24,14 @@
 ## 提交前验证
 
 ```powershell
-.\.venv\Scripts\python.exe -B -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -X utf8 -B -m unittest discover -s tests -v
 node tests/test_frontend.cjs
 git diff --check
 git status --short
 ```
 
 纯文档改动检查链接、命令与目录是否正确即可。没有 Node.js 时，请说明前端状态测试未运行；运行产品本身不需要 Node.js。
+
+备用 Streamlit 界面的测试需要先安装 `requirements-legacy.txt`；只安装主网页依赖时，`tests/test_legacy_ui.py` 会自动跳过。
 
 提交或 PR 说明应包含解决的问题、最终行为和已运行的验证。保持提交内容集中；不要提交 `workspace/`、虚拟环境、数据库、密钥或本机设置，不要通过强制添加绕过 `.gitignore`。

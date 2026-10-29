@@ -255,6 +255,31 @@ test("联系人按记录筛选与最近时间排序，搜索仍匹配昵称和�
   assert.deepEqual(plain(h.listedContacts()).map(item => item.username), ["older", "recent", "empty"]);
 });
 
+test("切换联系人分析失败时清空旧联系人图表", async () => {
+  const h = setup();
+  h.state.username = "synthetic_other_user";
+  h.state.dataUsername = "synthetic_user";
+  h.state.data = available("2026-10-02");
+  h.replies.push(new Error("synthetic failure"));
+  await h.loadAnalysis();
+  assert.equal(h.state.data, null);
+  assert.equal(h.state.dataUsername, "");
+  assert.equal(h.element("analysis-content").hidden, true);
+  assert.equal(h.element("message").textContent, "synthetic failure");
+});
+
+test("空通讯录加载完成后不再持续轮询联系人接口", async () => {
+  const h = setup();
+  const calls = [];
+  h.context.reloadContacts = preserve => { calls.push(preserve); };
+  vm.runInContext("renderStatus = status => { state.status = status; state.busy = false; }; loadContacts = async preserve => reloadContacts(preserve);", h.context);
+  h.state.contacts = [];
+  h.state.contactsLoaded = true;
+  h.replies.push({active: {valid: true, account: "synthetic_account"}, task: null});
+  await h.pollStatus();
+  assert.deepEqual(calls, []);
+});
+
 test("全部好友都无记录时仍显示筛选控件，可以切回全部通讯录", async () => {
   const h = setup();
   const contacts = [{username: "synthetic_empty", display_name: "测试", has_messages: false, last_message_time: ""}];

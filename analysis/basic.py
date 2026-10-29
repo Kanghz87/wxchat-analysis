@@ -140,7 +140,11 @@ def weekday_hour_counts(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def longest_text(frame: pd.DataFrame) -> pd.DataFrame:
-    selected = frame[message_labels(frame).eq("文字") & (frame["char_count"] > 0)]
+    selected = frame[
+        message_labels(frame).eq("文字")
+        & (frame["char_count"] > 0)
+        & frame["sender"].isin(("我", "对方"))
+    ]
     result = selected.sort_values(
         ["char_count", "timestamp", "source_db", "local_id"],
         ascending=[False, True, True, True], kind="stable",
